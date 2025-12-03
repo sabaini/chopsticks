@@ -1,15 +1,17 @@
-"""Unit tests for configuration loading."""
+"""Unit tests for config loader utility."""
 
-import tempfile
 import yaml
+import pytest
 from pathlib import Path
 
+from chopsticks.utils.config_loader import load_config
 
-class TestConfigLoading:
-    """Tests for configuration file loading."""
 
-    def test_load_yaml_config(self):
-        """Test loading a YAML configuration file."""
+class TestLoadConfig:
+    """Test load_config utility method."""
+
+    def test_load_config_returns_valid_dict(self, tmp_path):
+        """Validate load_config utility continues to function properly."""
         config_data = {
             "endpoint": "http://localhost:80",
             "access_key": "test-key",
@@ -18,44 +20,22 @@ class TestConfigLoading:
             "region": "default",
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        config_file = tmp_path / "test_config.yaml"
+        with open(config_file, "w") as f:
             yaml.dump(config_data, f)
-            config_path = f.name
 
-        try:
-            with open(config_path, "r") as f:
-                loaded_config = yaml.safe_load(f)
+        result = load_config(str(config_file))
 
-            assert loaded_config["endpoint"] == "http://localhost:80"
-            assert loaded_config["access_key"] == "test-key"
-            assert loaded_config["bucket"] == "test-bucket"
-        finally:
-            Path(config_path).unlink()
+        assert isinstance(result, dict)
+        assert result["endpoint"] == config_data["endpoint"]
+        assert result["access_key"] == config_data["access_key"]
+        assert result["secret_key"] == config_data["secret_key"]
+        assert result["bucket"] == config_data["bucket"]
+        assert result["region"] == config_data["region"]
 
-    def test_config_validation(self):
-        """Test configuration validation."""
-        required_keys = ["endpoint", "access_key", "secret_key", "bucket"]
+    def test_load_config_file_not_found(self, tmp_path):
+        """Validate load_config raises FileNotFoundError for missing files."""
+        non_existent = tmp_path / "missing.yaml"
 
-        config = {
-            "endpoint": "http://localhost:80",
-            "access_key": "key",
-            "secret_key": "secret",
-            "bucket": "bucket",
-        }
-
-        for key in required_keys:
-            assert key in config
-
-    def test_missing_required_field(self):
-        """Test handling of missing required configuration fields."""
-        config = {
-            "endpoint": "http://localhost:80",
-            "access_key": "key",
-            # missing secret_key and bucket
-        }
-
-        required_keys = ["endpoint", "access_key", "secret_key", "bucket"]
-        missing_keys = [key for key in required_keys if key not in config]
-
-        assert "secret_key" in missing_keys
-        assert "bucket" in missing_keys
+        with pytest.raises(FileNotFoundError, match="Configuration file not found"):
+            load_config(str(non_existent))
