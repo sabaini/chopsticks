@@ -9,6 +9,7 @@ A flexible, extensible stress testing framework for Ceph storage using Locust to
 - **Scenario-Based Testing**: Define and run various stress test scenarios
 - **Locust-Powered**: Leverage Locust for distributed load generation
 - **Configuration-Driven**: YAML-based configuration for workloads and scenarios
+- **Comprehensive Metrics**: Detailed performance metrics with multiple export formats
 
 ## Architecture
 
@@ -21,6 +22,7 @@ chopsticks/
 │   ├── s3/            # S3 drivers (s5cmd, boto3, etc.)
 │   └── rbd/           # RBD drivers (future)
 ├── scenarios/          # Test scenario definitions
+├── metrics/            # Metrics collection and export
 ├── config/             # Configuration files
 └── utils/              # Utility functions
 ```
@@ -60,49 +62,126 @@ driver: s5cmd
 
 ```bash
 # Run large object test with web UI (default: http://localhost:8089)
-uv run locust -f chopsticks/scenarios/s3_large_objects.py
+uv run locust -f src/chopsticks/scenarios/s3_large_objects.py
 
 # Run headless mode with 10 users, spawn rate 2/sec, run for 10 minutes
-uv run locust -f chopsticks/scenarios/s3_large_objects.py --headless -u 10 -r 2 -t 10m
+uv run locust -f src/chopsticks/scenarios/s3_large_objects.py --headless -u 10 -r 2 -t 10m
 
 # Run distributed (master)
-uv run locust -f chopsticks/scenarios/s3_large_objects.py --master
+uv run locust -f src/chopsticks/scenarios/s3_large_objects.py --master
 
 # Run distributed (worker)
-uv run locust -f chopsticks/scenarios/s3_large_objects.py --worker --master-host=<master-ip>
+uv run locust -f src/chopsticks/scenarios/s3_large_objects.py --worker --master-host=<master-ip>
 ```
+
+## Metrics Collection
+
+Chopsticks includes a comprehensive metrics collection system to analyze cluster performance.
+
+### Collected Metrics
+
+1. **Operation Metrics**: Per-operation performance (duration, throughput, success/failure)
+2. **Aggregated Metrics**: Statistical summaries with percentiles (p50, p75, p90, p95, p99, p99.9)
+3. **System Resources**: Client-side CPU, memory, network, and disk usage
+4. **Network Metrics**: Latency, bandwidth, packet loss, TCP statistics
+5. **Error Metrics**: Detailed failure tracking with categorization
+6. **Test Configuration**: Test parameters and environment metadata
+
+### Export Formats
+
+Metrics can be exported in multiple formats:
+
+- **JSON**: Complete structured export with all metrics
+- **JSONL**: Streaming JSON Lines format for large datasets
+- **CSV**: Spreadsheet-compatible format
+- **Prometheus**: Time-series format for monitoring dashboards
+
+### Using Metrics in Tests
+
+```python
+from chopsticks.metrics import MetricsCollector, TestConfiguration, OperationMetric
+from datetime import datetime
+import uuid
+
+# Initialize collector
+test_config = TestConfiguration(
+    test_run_id=str(uuid.uuid4()),
+    test_name="S3 Performance Test",
+    start_time=datetime.utcnow(),
+    scenario="s3_large_objects"
+)
+
+collector = MetricsCollector(
+    test_run_id=test_config.test_run_id,
+    test_config=test_config
+)
+
+# Metrics are automatically collected during test runs
+
+# Export metrics after test
+collector.export_json("metrics.json")
+collector.export_csv("metrics.csv")
+```
+
+### Key Performance Indicators (KPIs)
+
+The metrics system tracks:
+
+- **Throughput**: MB/s and operations/second
+- **Latency**: p50, p95, p99 response times
+- **Success Rate**: Percentage of successful operations
+- **IOPS**: I/O operations per second
+- **Efficiency**: Throughput per CPU usage
+- **Stability**: Latency standard deviation
+
+See [METRICS_DESIGN.md](METRICS_DESIGN.md) for complete details.
 
 ## Creating New Scenarios
 
-1. Create a new scenario file in `chopsticks/scenarios/`
+1. Create a new scenario file in `src/chopsticks/scenarios/`
 2. Inherit from the appropriate workload class
 3. Define your test tasks with `@task` decorator
 
 Example:
 
 ```python
-from locust import task
+from locust import task, between
 from chopsticks.workloads.s3.s3_workload import S3Workload
 
 class MyCustomScenario(S3Workload):
-    @task
-    def custom_test(self):
-        # Your test logic here
-        self.upload_object("test-key", "test-data")
+    wait_time = between(1, 3)
+    
+    @task(3)
+    def upload_large_file(self):
+        key = self.generate_key("large")
+        data = self.generate_data(100 * 1024 * 1024)  # 100MB
+        self.client.upload(key, data)
+    
+    @task(2)
+    def download_file(self):
+        # Download previously uploaded file
+        if self.uploaded_keys:
+            key = random.choice(self.uploaded_keys)
+            self.client.download(key)
 ```
 
 ## Available Scenarios
 
 ### S3 Large Objects
+
 Tests upload and download of large objects (configurable size, default 100MB).
 
 ```bash
-uv run locust -f chopsticks/scenarios/s3_large_objects.py
+# Default 100MB objects
+uv run locust -f src/chopsticks/scenarios/s3_large_objects.py
+
+# Custom object size (50MB)
+LARGE_OBJECT_SIZE=50 uv run locust -f src/chopsticks/scenarios/s3_large_objects.py
 ```
 
 ## Adding New Drivers
 
-1. Create driver class in `chopsticks/drivers/s3/` (or appropriate workload)
+1. Create driver class in `src/chopsticks/drivers/s3/` (or appropriate workload)
 2. Implement the `BaseS3Driver` interface
 3. Update workload configuration to use new driver
 
@@ -112,23 +191,172 @@ Example:
 from chopsticks.drivers.s3.base import BaseS3Driver
 
 class MyS3Driver(BaseS3Driver):
-    def upload(self, key: str, data: bytes) -> bool:
+    def upload(self, key: str, data: bytes, metadata=None) -> bool:
         # Implementation
         pass
     
     def download(self, key: str) -> bytes:
         # Implementation
         pass
+    
+    def delete(self, key: str) -> bool:
+        # Implementation
+        pass
 ```
 
-## Extending to RBD
+Register in workload:
 
-The framework is designed for easy extension. To add RBD support:
+```python
+# In s3_workload.py
+def _get_driver(self, driver_name: str) -> BaseS3Driver:
+    drivers = {
+        's5cmd': S5cmdDriver,
+        'my_driver': MyS3Driver,  # Add here
+    }
+    return drivers[driver_name](self.config)
+```
 
-1. Create `chopsticks/workloads/rbd/rbd_workload.py`
-2. Create driver in `chopsticks/drivers/rbd/`
-3. Define RBD configuration in `config/rbd_config.yaml`
-4. Create scenarios in `chopsticks/scenarios/`
+## Extending to New Workloads
+
+The framework is designed for easy extension. To add a new workload (e.g., RBD):
+
+### 1. Create Driver Interface
+
+```python
+# src/chopsticks/drivers/rbd/base.py
+from abc import ABC, abstractmethod
+
+class BaseRBDDriver(ABC):
+    @abstractmethod
+    def read(self, offset: int, length: int) -> bytes:
+        pass
+    
+    @abstractmethod
+    def write(self, offset: int, data: bytes) -> bool:
+        pass
+```
+
+### 2. Implement Driver
+
+```python
+# src/chopsticks/drivers/rbd/librbd_driver.py
+from .base import BaseRBDDriver
+import rbd
+
+class LibRBDDriver(BaseRBDDriver):
+    def __init__(self, config):
+        self.config = config
+        # Initialize RBD connection
+    
+    def read(self, offset, length):
+        # Implementation using librbd
+        pass
+    
+    def write(self, offset, data):
+        # Implementation using librbd
+        pass
+```
+
+### 3. Create Workload
+
+```python
+# src/chopsticks/workloads/rbd/rbd_workload.py
+from locust import User
+from chopsticks.drivers.rbd.librbd_driver import LibRBDDriver
+from chopsticks.metrics import MetricsCollector, OperationMetric
+
+class RBDWorkload(User):
+    abstract = True
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Load config, initialize driver
+        self.driver = LibRBDDriver(config)
+        
+        # Initialize metrics collector
+        self.metrics_collector = MetricsCollector(...)
+    
+    def read_block(self, offset, length):
+        # Implement with metrics collection
+        start = datetime.utcnow()
+        data = self.driver.read(offset, length)
+        end = datetime.utcnow()
+        
+        # Record metric
+        metric = OperationMetric(
+            operation_id=str(uuid.uuid4()),
+            timestamp_start=start,
+            timestamp_end=end,
+            operation_type=OperationType.READ,
+            workload_type=WorkloadType.RBD,
+            # ... other fields
+        )
+        self.metrics_collector.record_operation(metric)
+        
+        return data
+```
+
+### 4. Create Scenario
+
+```python
+# src/chopsticks/scenarios/rbd_random_io.py
+from locust import task, between
+from chopsticks.workloads.rbd.rbd_workload import RBDWorkload
+
+class RBDRandomIO(RBDWorkload):
+    wait_time = between(0.1, 0.5)
+    
+    @task
+    def random_read(self):
+        offset = random.randint(0, self.image_size)
+        self.read_block(offset, 4096)
+    
+    @task
+    def random_write(self):
+        offset = random.randint(0, self.image_size)
+        data = os.urandom(4096)
+        self.write_block(offset, data)
+```
+
+### 5. Integrating Metrics
+
+All workloads should integrate metrics for comprehensive performance tracking:
+
+```python
+from chopsticks.metrics import (
+    MetricsCollector,
+    OperationMetric,
+    OperationType,
+    WorkloadType
+)
+from datetime import datetime
+import uuid
+
+# Record operation
+start = datetime.utcnow()
+result = perform_operation()
+end = datetime.utcnow()
+
+duration_ms = (end - start).total_seconds() * 1000
+throughput_mbps = (size_bytes / 1024 / 1024) / (duration_ms / 1000) if duration_ms > 0 else 0
+
+metric = OperationMetric(
+    operation_id=str(uuid.uuid4()),
+    timestamp_start=start,
+    timestamp_end=end,
+    operation_type=OperationType.UPLOAD,  # or READ, WRITE, etc.
+    workload_type=WorkloadType.S3,  # or RBD
+    object_key=key,
+    object_size_bytes=size_bytes,
+    duration_ms=duration_ms,
+    throughput_mbps=throughput_mbps,
+    success=result.success,
+    error_code=result.error_code if not result.success else None,
+    driver="my_driver"
+)
+
+metrics_collector.record_operation(metric)
+```
 
 ## Configuration
 
@@ -142,6 +370,19 @@ The framework is designed for easy extension. To add RBD support:
 - `driver`: Driver to use (default: s5cmd)
 - `driver_config`: Driver-specific configuration
 
+Example:
+
+```yaml
+endpoint: http://10.240.47.47:80
+access_key: YOUR_ACCESS_KEY
+secret_key: YOUR_SECRET_KEY
+bucket: test-bucket
+region: default
+driver: s5cmd
+driver_config:
+  s5cmd_path: s5cmd
+```
+
 ## Development
 
 ```bash
@@ -152,12 +393,32 @@ uv sync
 uv run pytest
 
 # Format code
-uv run black chopsticks/
+uv run black src/chopsticks/
 
 # Lint code
-uv run ruff check chopsticks/
+uv run ruff check src/chopsticks/
 ```
+
+## Documentation
+
+- [DESIGN.md](DESIGN.md) - Architecture and design details
+- [METRICS_DESIGN.md](METRICS_DESIGN.md) - Comprehensive metrics specification
+- [QUICKSTART.md](QUICKSTART.md) - Quick start guide
+- [FRAMEWORK_SUMMARY.md](FRAMEWORK_SUMMARY.md) - Complete framework overview
+- [TEST_RUN_SUMMARY.md](TEST_RUN_SUMMARY.md) - Live test results
+
+## Contributing
+
+1. Follow existing architecture patterns
+2. Implement base interfaces for new components
+3. Add metrics collection to new workloads
+4. Include comprehensive docstrings
+5. Follow Conventional Commits for commit messages
 
 ## License
 
 MIT
+
+## Author
+
+Utkarsh Bhatt <utkarsh.bhatt@canonical.com>
