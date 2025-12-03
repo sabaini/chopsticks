@@ -279,7 +279,9 @@ class TestSetEnvironmentVariables:
         workload_config.write_text("test: config")
         locustfile = tmp_path / "s3_scenario.py"
         # Create a proper scenario file with S3Workload class
-        locustfile.write_text("from locust import User\nclass S3Workload(User):\n    pass\nclass TestScenario(S3Workload):\n    pass")
+        locustfile.write_text(
+            "from locust import User\nclass S3Workload(User):\n    pass\nclass TestScenario(S3Workload):\n    pass"
+        )
 
         args = parse_args(
             ["--workload-config", str(workload_config), "-f", str(locustfile)]
@@ -302,7 +304,9 @@ class TestSetEnvironmentVariables:
         workload_config.write_text("test: config")
         scenario_config.write_text("scenario: config")
         # Create a proper scenario file with RbdWorkload class
-        locustfile.write_text("from locust import User\nclass RbdWorkload(User):\n    pass\nclass TestScenario(RbdWorkload):\n    pass")
+        locustfile.write_text(
+            "from locust import User\nclass RbdWorkload(User):\n    pass\nclass TestScenario(RbdWorkload):\n    pass"
+        )
 
         args = parse_args(
             [
@@ -330,7 +334,9 @@ class TestSetEnvironmentVariables:
         workload_config.write_text("test: config")
         locustfile = tmp_path / "s3_scenario.py"
         # Create a proper scenario file with S3Workload class
-        locustfile.write_text("from locust import User\nclass S3Workload(User):\n    pass\nclass TestScenario(S3Workload):\n    pass")
+        locustfile.write_text(
+            "from locust import User\nclass S3Workload(User):\n    pass\nclass TestScenario(S3Workload):\n    pass"
+        )
 
         args = parse_args(
             ["--workload-config", str(workload_config), "-f", str(locustfile)]

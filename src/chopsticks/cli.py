@@ -178,20 +178,20 @@ def build_locust_command(args: argparse.Namespace) -> tuple[List[str], str]:
 def detect_workload_type_from_locustfile(locustfile_path: str) -> str:
     """
     Detect workload type by inspecting the scenario file's base class.
-    
+
     Args:
         locustfile_path: Path to the locustfile
-        
+
     Returns:
         Workload type (e.g., 's3', 'rbd') in lowercase
     """
     import ast
     import re
-    
+
     try:
-        with open(locustfile_path, 'r') as f:
+        with open(locustfile_path, "r") as f:
             tree = ast.parse(f.read())
-        
+
         # Find class definitions that inherit from a workload class
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
@@ -199,17 +199,17 @@ def detect_workload_type_from_locustfile(locustfile_path: str) -> str:
                     # Check if base class name contains "Workload"
                     if isinstance(base, ast.Name) and "Workload" in base.id:
                         # Extract workload type from class name (e.g., S3Workload -> s3)
-                        match = re.match(r'([A-Z][a-z0-9]+)Workload', base.id)
+                        match = re.match(r"([A-Z][a-z0-9]+)Workload", base.id)
                         if match:
                             return match.group(1).lower()
                     # Handle attribute access like workloads.s3.S3Workload
                     elif isinstance(base, ast.Attribute) and "Workload" in base.attr:
-                        match = re.match(r'([A-Z][a-z0-9]+)Workload', base.attr)
+                        match = re.match(r"([A-Z][a-z0-9]+)Workload", base.attr)
                         if match:
                             return match.group(1).lower()
     except Exception:
         pass
-    
+
     # Fallback: default to s3
     return "s3"
 
@@ -228,7 +228,7 @@ def set_environment_variables(args: argparse.Namespace) -> None:
 
     # Detect workload type from scenario file's base class
     workload_type = detect_workload_type_from_locustfile(args.locustfile).upper()
-    
+
     # Set workload-specific config path (e.g., S3_CONFIG_PATH)
     os.environ[f"{workload_type}_CONFIG_PATH"] = str(workload_config_path)
 
