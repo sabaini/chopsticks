@@ -1,0 +1,23 @@
+# S3 Configuration for Chopsticks
+# Copy this file to s3_config.yaml and update with your settings
+
+# S3 endpoint URL
+endpoint: https://s3.example.com
+
+# AWS credentials
+access_key: YOUR_ACCESS_KEY_HERE
+secret_key: YOUR_SECRET_KEY_HERE
+
+# S3 bucket name (will be created if it doesn't exist)
+bucket: chopsticks-test
+
+# AWS region (optional)
+region: us-east-1
+
+# Driver to use (currently only s5cmd is supported)
+driver: s5cmd
+
+# Driver-specific configuration
+driver_config:
+  # Path to s5cmd binary (default: s5cmd in PATH)
+  s5cmd_path: s5cmd
