@@ -10,6 +10,7 @@ A flexible, extensible stress testing framework for Ceph storage using Locust to
 - **Locust-Powered**: Leverage Locust for distributed load generation
 - **Configuration-Driven**: YAML-based configuration for workloads and scenarios
 - **Comprehensive Metrics**: Detailed performance metrics with multiple export formats
+- **CI/CD Ready**: Automated functional tests run on every pull request
 
 ## Architecture
 
@@ -399,6 +400,37 @@ uv run black src/chopsticks/
 uv run ruff check src/chopsticks/
 ```
 
+## Testing
+
+### Functional Tests
+
+Chopsticks includes automated functional tests that run on every pull request to validate the framework against a real MicroCeph cluster.
+
+#### Running Tests Locally
+
+```bash
+# Run with default settings (2 minutes, 10MB objects, 3 users)
+./scripts/run-functional-test.sh
+
+# Run with custom settings
+TEST_DURATION=5m LARGE_OBJECT_SIZE=50 TEST_USERS=5 ./scripts/run-functional-test.sh
+```
+
+**Prerequisites:**
+- MicroCeph installed and running with RGW enabled
+- `uv`, `jq`, and `s5cmd` installed
+
+#### CI/CD Integration
+
+The GitHub Actions workflow (`.github/workflows/functional-tests.yml`) automatically:
+1. Sets up MicroCeph with 3 OSDs using loop devices
+2. Configures S3 endpoint and creates test bucket
+3. Runs 2-minute stress test with metrics collection
+4. Validates 100% success rate and operation count
+5. Uploads test artifacts (HTML report, metrics files)
+
+See [`.github/workflows/README.md`](.github/workflows/README.md) for details.
+
 ## Documentation
 
 - [DESIGN.md](DESIGN.md) - Architecture and design details
@@ -406,6 +438,7 @@ uv run ruff check src/chopsticks/
 - [QUICKSTART.md](QUICKSTART.md) - Quick start guide
 - [FRAMEWORK_SUMMARY.md](FRAMEWORK_SUMMARY.md) - Complete framework overview
 - [TEST_RUN_SUMMARY.md](TEST_RUN_SUMMARY.md) - Live test results
+- [.github/workflows/README.md](.github/workflows/README.md) - CI/CD functional tests
 
 ## Contributing
 
@@ -414,6 +447,7 @@ uv run ruff check src/chopsticks/
 3. Add metrics collection to new workloads
 4. Include comprehensive docstrings
 5. Follow Conventional Commits for commit messages
+6. Ensure functional tests pass before submitting PR
 
 ## License
 
