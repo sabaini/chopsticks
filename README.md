@@ -62,17 +62,28 @@ driver: s5cmd
 ### Run a Test
 
 ```bash
-# Run large object test with web UI (default: http://localhost:8089)
-uv run locust -f src/chopsticks/scenarios/s3_large_objects.py
+# Run with web UI (default: http://localhost:8089)
+uv run chopsticks --workload-config config/s3_config.yaml \
+  -f src/chopsticks/scenarios/s3_large_objects.py
 
 # Run headless mode with 10 users, spawn rate 2/sec, run for 10 minutes
-uv run locust -f src/chopsticks/scenarios/s3_large_objects.py --headless -u 10 -r 2 -t 10m
+uv run chopsticks --workload-config config/s3_config.yaml \
+  -f src/chopsticks/scenarios/s3_large_objects.py \
+  --headless --users 10 --spawn-rate 2 --duration 10m
 
-# Run distributed (master)
-uv run locust -f src/chopsticks/scenarios/s3_large_objects.py --master
+# Run with custom scenario config
+uv run chopsticks --workload-config config/s3_config.yaml \
+  --scenario-config config/my_scenario.yaml \
+  -f src/chopsticks/scenarios/s3_large_objects.py \
+  --headless --users 50 --spawn-rate 5 --duration 5m
+```
 
-# Run distributed (worker)
-uv run locust -f src/chopsticks/scenarios/s3_large_objects.py --worker --master-host=<master-ip>
+You can also use Locust directly if needed:
+
+```bash
+# Set config path and run with Locust
+S3_CONFIG_PATH=config/s3_config.yaml uv run locust \
+  -f src/chopsticks/scenarios/s3_large_objects.py
 ```
 
 ## Metrics Collection
@@ -173,11 +184,20 @@ class MyCustomScenario(S3Workload):
 Tests upload and download of large objects (configurable size, default 100MB).
 
 ```bash
-# Default 100MB objects
-uv run locust -f src/chopsticks/scenarios/s3_large_objects.py
+# Default 100MB objects with web UI
+uv run chopsticks --workload-config config/s3_config.yaml \
+  -f src/chopsticks/scenarios/s3_large_objects.py
 
-# Custom object size (50MB)
-LARGE_OBJECT_SIZE=50 uv run locust -f src/chopsticks/scenarios/s3_large_objects.py
+# Custom object size (50MB) via scenario config
+# Create config/custom_scenario.yaml with:
+# s3_large_objects:
+#   object_size_mb: 50
+#   max_keys_in_memory: 10
+
+uv run chopsticks --workload-config config/s3_config.yaml \
+  --scenario-config config/custom_scenario.yaml \
+  -f src/chopsticks/scenarios/s3_large_objects.py \
+  --headless --users 10 --spawn-rate 2 --duration 5m
 ```
 
 ## Adding New Drivers

@@ -77,6 +77,14 @@ driver_config:
   s5cmd_path: /usr/local/bin/s5cmd
 EOF
 
+# Create scenario config for test
+echo "Creating scenario configuration..."
+cat > "${PROJECT_ROOT}/config/test_scenario_config.yaml" <<EOF
+s3_large_objects:
+  object_size_mb: ${OBJECT_SIZE}
+  max_keys_in_memory: 10
+EOF
+
 # Create bucket if it doesn't exist
 echo "Creating S3 bucket..."
 export S3_ENDPOINT_URL=http://127.0.0.1:80
@@ -93,16 +101,15 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 cd "${PROJECT_ROOT}"
-export LARGE_OBJECT_SIZE=${OBJECT_SIZE}
 
-uv run locust \
+uv run chopsticks \
+    --workload-config config/s3_config.yaml \
+    --scenario-config config/test_scenario_config.yaml \
     -f src/chopsticks/scenarios/s3_large_objects_with_metrics.py \
     --headless \
     --users ${USERS} \
     --spawn-rate ${SPAWN_RATE} \
-    --run-time ${TEST_DURATION} \
-    --html /tmp/chopsticks-test-report.html \
-    --csv /tmp/chopsticks-test
+    --duration ${TEST_DURATION}
 
 # Validate results
 echo ""
@@ -111,10 +118,18 @@ echo "Validating test results..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-METRICS_FILE=$(ls /tmp/chopsticks_metrics/metrics_*.json | tail -1)
+# Find the most recent run directory
+RUN_DIR=$(ls -td /tmp/chopsticks/*/ 2>/dev/null | head -1)
+
+if [ -z "${RUN_DIR}" ]; then
+    echo "❌ Run directory not found!"
+    exit 1
+fi
+
+METRICS_FILE="${RUN_DIR}/metrics.json"
 
 if [ ! -f "${METRICS_FILE}" ]; then
-    echo "❌ Metrics file not found!"
+    echo "❌ Metrics file not found at ${METRICS_FILE}!"
     exit 1
 fi
 
@@ -142,7 +157,9 @@ fi
 
 echo "✅ TEST PASSED!"
 echo ""
-echo "Reports generated:"
-echo "  HTML:    /tmp/chopsticks-test-report.html"
-echo "  Metrics: ${METRICS_FILE}"
+echo "Reports generated in: ${RUN_DIR}"
+echo "  Locust HTML:  ${RUN_DIR}/locust_report.html"
+echo "  Locust CSV:   ${RUN_DIR}/locust*.csv"
+echo "  Metrics JSON: ${RUN_DIR}/metrics.json"
+echo "  Metrics CSV:  ${RUN_DIR}/metrics.csv"
 echo ""

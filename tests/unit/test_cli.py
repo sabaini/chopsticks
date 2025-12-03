@@ -167,9 +167,10 @@ class TestBuildLocustCommand:
             "-f", "scenarios/s3_large_objects.py"
         ])
 
-        cmd = build_locust_command(args)
+        cmd, run_dir = build_locust_command(args)
 
         assert cmd == ["locust", "-f", "scenarios/s3_large_objects.py"]
+        assert run_dir == ""
 
     def test_headless_mode_command(self):
         """Test command for headless mode."""
@@ -182,12 +183,18 @@ class TestBuildLocustCommand:
             "--duration", "5m"
         ])
 
-        cmd = build_locust_command(args)
+        cmd, run_dir = build_locust_command(args)
 
-        assert cmd == [
-            "locust", "-f", "scenarios/s3_large_objects.py",
-            "--headless", "-u", "10", "-r", "2", "-t", "5m"
-        ]
+        assert cmd[0] == "locust"
+        assert "-f" in cmd
+        assert "scenarios/s3_large_objects.py" in cmd
+        assert "--headless" in cmd
+        assert "-u" in cmd and "10" in cmd
+        assert "-r" in cmd and "2" in cmd
+        assert "-t" in cmd and "5m" in cmd
+        assert "--html" in cmd
+        assert "--csv" in cmd
+        assert run_dir.startswith("/tmp/chopsticks/")
 
     def test_headless_without_duration(self):
         """Test headless command without duration."""
@@ -199,12 +206,16 @@ class TestBuildLocustCommand:
             "--spawn-rate", "1"
         ])
 
-        cmd = build_locust_command(args)
+        cmd, run_dir = build_locust_command(args)
 
-        assert cmd == [
-            "locust", "-f", "scenario.py",
-            "--headless", "-u", "5", "-r", "1"
-        ]
+        assert cmd[0] == "locust"
+        assert "-f" in cmd
+        assert "scenario.py" in cmd
+        assert "--headless" in cmd
+        assert "-u" in cmd and "5" in cmd
+        assert "-r" in cmd and "1" in cmd
+        assert "-t" not in cmd
+        assert run_dir.startswith("/tmp/chopsticks/")
 
 
 class TestSetEnvironmentVariables:

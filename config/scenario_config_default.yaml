@@ -1,0 +1,11 @@
+# Default Scenario Configuration for Chopsticks
+# This file contains sane defaults and is used when no custom scenario config is provided
+# Copy values to a custom scenario config file and modify as needed
+
+# S3 Large Objects scenario (s3_large_objects.py)
+s3_large_objects:
+  # Object size in MB
+  object_size_mb: 100
+  
+  # Maximum number of keys to keep in memory
+  max_keys_in_memory: 10

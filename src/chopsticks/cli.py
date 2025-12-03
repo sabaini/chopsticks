@@ -137,7 +137,7 @@ def validate_arguments(args: argparse.Namespace) -> None:
             )
 
 
-def build_locust_command(args: argparse.Namespace) -> List[str]:
+def build_locust_command(args: argparse.Namespace) -> tuple[List[str], str]:
     """
     Build Locust command from parsed arguments.
     
@@ -145,21 +145,38 @@ def build_locust_command(args: argparse.Namespace) -> List[str]:
         args: Parsed arguments
         
     Returns:
-        List of command arguments for Locust
+        Tuple of (command list, run directory path)
     """
+    import uuid
+    from datetime import datetime
+    
     cmd = ["locust", "-f", args.locustfile]
+    run_dir = ""
     
     # Headless mode
     if args.headless:
         cmd.append("--headless")
         cmd.extend(["-u", str(args.users)])
         cmd.extend(["-r", str(args.spawn_rate)])
+        
+        # Create run-specific directory with abbreviated run ID
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_id = str(uuid.uuid4())[:8]
+        run_dir = f"/tmp/chopsticks/{timestamp}_{run_id}"
+        os.makedirs(run_dir, exist_ok=True)
+        
+        # Add HTML and CSV reports to run directory
+        cmd.extend(["--html", f"{run_dir}/locust_report.html"])
+        cmd.extend(["--csv", f"{run_dir}/locust"])
+        
+        # Set environment variable for metrics collector to use same directory
+        os.environ["CHOPSTICKS_RUN_DIR"] = run_dir
     
     # Duration
     if args.duration:
         cmd.extend(["-t", args.duration])
     
-    return cmd
+    return cmd, run_dir
 
 
 def set_environment_variables(args: argparse.Namespace) -> None:
@@ -206,7 +223,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         
         set_environment_variables(args)
         
-        locust_cmd = build_locust_command(args)
+        locust_cmd, run_dir = build_locust_command(args)
         
         print(f"Starting Chopsticks...")
         print(f"Workload config: {args.workload_config}")
@@ -216,6 +233,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"Mode: Headless ({args.users} users, spawn rate {args.spawn_rate}/s)")
             if args.duration:
                 print(f"Duration: {args.duration}")
+            if run_dir:
+                print(f"Reports: {run_dir}")
         else:
             print(f"Mode: Web UI (http://localhost:8089)")
         print()

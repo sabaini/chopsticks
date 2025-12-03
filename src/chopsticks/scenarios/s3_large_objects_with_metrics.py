@@ -74,18 +74,18 @@ def on_locust_quit(environment, **kwargs):
             (test_config.end_time - test_config.start_time).total_seconds()
         )
 
-        # Export metrics
-        output_dir = "/tmp/chopsticks_metrics"
+        # Export metrics to run directory if set, otherwise use default
+        output_dir = os.environ.get("CHOPSTICKS_RUN_DIR", "/tmp/chopsticks_metrics")
         os.makedirs(output_dir, exist_ok=True)
 
         metrics_collector.export_json(
-            f"{output_dir}/metrics_{test_config.test_run_id}.json"
+            f"{output_dir}/metrics.json"
         )
         metrics_collector.export_csv(
-            f"{output_dir}/metrics_{test_config.test_run_id}.csv"
+            f"{output_dir}/metrics.csv"
         )
         metrics_collector.export_jsonl(
-            f"{output_dir}/metrics_{test_config.test_run_id}.jsonl"
+            f"{output_dir}/metrics.jsonl"
         )
 
         # Get summary

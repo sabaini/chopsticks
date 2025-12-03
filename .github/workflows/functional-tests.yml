@@ -75,6 +75,13 @@ jobs:
           driver_config:
             s5cmd_path: /usr/local/bin/s5cmd
           EOF
+          
+          # Create scenario config for CI test
+          cat > config/ci_scenario_config.yaml <<EOF
+          s3_large_objects:
+            object_size_mb: 10
+            max_keys_in_memory: 10
+          EOF
       
       - name: Install s5cmd
         run: |
@@ -94,30 +101,38 @@ jobs:
           s5cmd mb s3://chopsticks-ci-test
       
       - name: Run S3 Large Object Test (2 minutes)
-        env:
-          LARGE_OBJECT_SIZE: 10
         run: |
-          uv run locust \
+          uv run chopsticks \
+            --workload-config config/s3_config.yaml \
+            --scenario-config config/ci_scenario_config.yaml \
             -f src/chopsticks/scenarios/s3_large_objects_with_metrics.py \
             --headless \
             --users 3 \
             --spawn-rate 1 \
-            --run-time 2m \
-            --html /tmp/chopsticks-ci-report.html \
-            --csv /tmp/chopsticks-ci
+            --duration 2m
       
       - name: Validate test results
         run: |
-          if [ ! -f /tmp/chopsticks_metrics/metrics_*.json ]; then
-            echo "❌ Metrics file not found!"
+          # Find the most recent run directory
+          RUN_DIR=$(ls -td /tmp/chopsticks/*/ 2>/dev/null | head -1)
+          
+          if [ -z "${RUN_DIR}" ]; then
+            echo "❌ Run directory not found!"
+            exit 1
+          fi
+          
+          METRICS_FILE="${RUN_DIR}/metrics.json"
+          
+          if [ ! -f "${METRICS_FILE}" ]; then
+            echo "❌ Metrics file not found at ${METRICS_FILE}!"
             exit 1
           fi
           
           # Check metrics
-          METRICS_FILE=$(ls /tmp/chopsticks_metrics/metrics_*.json)
           SUCCESS_RATE=$(cat ${METRICS_FILE} | jq -r '.summary.operations.success_rate')
           TOTAL_OPS=$(cat ${METRICS_FILE} | jq -r '.summary.operations.total')
           
+          echo "Run Directory: ${RUN_DIR}"
           echo "Total Operations: ${TOTAL_OPS}"
           echo "Success Rate: ${SUCCESS_RATE}%"
           
@@ -139,10 +154,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-report
-          path: |
-            /tmp/chopsticks-ci-report.html
-            /tmp/chopsticks_metrics/
-            /tmp/chopsticks-ci_*.csv
+          path: /tmp/chopsticks/
           retention-days: 30
       
       - name: Cleanup

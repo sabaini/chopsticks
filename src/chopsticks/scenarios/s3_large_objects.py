@@ -1,6 +1,6 @@
-import os
 from locust import task, between
 from chopsticks.workloads.s3.s3_workload import S3Workload
+from chopsticks.utils.scenario_config import get_scenario_value
 
 
 class S3LargeObjectTest(S3Workload):
@@ -10,18 +10,22 @@ class S3LargeObjectTest(S3Workload):
     Tests upload and download of large objects to simulate
     real-world large file workloads.
 
-    Environment Variables:
-        LARGE_OBJECT_SIZE: Size of objects in MB (default: 100)
-        UPLOAD_WEIGHT: Weight for upload task (default: 3)
-        DOWNLOAD_WEIGHT: Weight for download task (default: 2)
+    Configuration:
+        Requires scenario config file with 's3_large_objects' section.
+        Uses default config (config/scenario_config_default.yaml) if no custom config provided.
+        
+        Required fields:
+        - object_size_mb: Size of objects in MB
+        - max_keys_in_memory: Maximum keys to keep in memory
     """
 
     wait_time = between(1, 3)
 
     def on_start(self):
         """Initialize test parameters"""
-        self.object_size_mb = int(os.environ.get("LARGE_OBJECT_SIZE", "100"))
+        self.object_size_mb = get_scenario_value("s3_large_objects", "object_size_mb")
         self.object_size_bytes = self.object_size_mb * 1024 * 1024
+        self.max_keys = get_scenario_value("s3_large_objects", "max_keys_in_memory")
         self.uploaded_keys = []
 
     @task(3)
@@ -34,8 +38,8 @@ class S3LargeObjectTest(S3Workload):
 
         if success:
             self.uploaded_keys.append(key)
-            # Keep only last 10 keys to avoid memory issues
-            if len(self.uploaded_keys) > 10:
+            # Keep only configured number of keys to avoid memory issues
+            if len(self.uploaded_keys) > self.max_keys:
                 self.uploaded_keys.pop(0)
 
     @task(2)
