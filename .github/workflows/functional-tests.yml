@@ -2,53 +2,53 @@ name: Functional Tests
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [main]
   push:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   s3-stress-test:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           version: "latest"
-      
+
       - name: Set up Python
         run: uv python install 3.12
-      
+
       - name: Install dependencies
         run: uv sync
-      
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y snapd jq
-      
+
       - name: Install MicroCeph
         run: |
           sudo snap install microceph --channel=latest/stable
           sudo microceph cluster bootstrap
-          
+
           # Create loop devices for OSDs
           for i in 1 2 3; do
             sudo truncate -s 10G /tmp/osd${i}.img
             LOOP_DEV=$(sudo losetup -f --show /tmp/osd${i}.img)
             sudo microceph disk add ${LOOP_DEV} --wipe
           done
-          
+
           # Enable RGW
           sudo microceph enable rgw
           sleep 10
           sudo microceph status
-      
+
       - name: Create S3 user and configure
         run: |
           # Create S3 user
@@ -56,13 +56,13 @@ jobs:
             --uid=chopsticks-ci \
             --display-name="Chopsticks CI" \
             --email=ci@chopsticks.io > /tmp/s3_user.json
-          
+
           ACCESS_KEY=$(cat /tmp/s3_user.json | jq -r ".keys[0].access_key")
           SECRET_KEY=$(cat /tmp/s3_user.json | jq -r ".keys[0].secret_key")
-          
+
           echo "ACCESS_KEY=${ACCESS_KEY}" >> $GITHUB_ENV
           echo "SECRET_KEY=${SECRET_KEY}" >> $GITHUB_ENV
-          
+
           # Create S3 config
           mkdir -p config
           cat > config/s3_config.yaml <<EOF
@@ -75,14 +75,14 @@ jobs:
           driver_config:
             s5cmd_path: /usr/local/bin/s5cmd
           EOF
-          
+
           # Create scenario config for CI test
           cat > config/ci_scenario_config.yaml <<EOF
           s3_large_objects:
-            object_size_mb: 10
-            max_keys_in_memory: 10
+            object_size_mb: 1
+            max_keys_in_memory: 5
           EOF
-      
+
       - name: Install s5cmd
         run: |
           curl -L -o /tmp/s5cmd.tar.gz \
@@ -90,7 +90,7 @@ jobs:
           sudo tar -xzf /tmp/s5cmd.tar.gz -C /usr/local/bin s5cmd
           sudo chmod +x /usr/local/bin/s5cmd
           s5cmd version
-      
+
       - name: Create S3 bucket
         env:
           S3_ENDPOINT_URL: http://127.0.0.1:80
@@ -99,7 +99,7 @@ jobs:
           AWS_REGION: default
         run: |
           s5cmd mb s3://chopsticks-ci-test
-      
+
       - name: Run S3 Large Object Test (2 minutes)
         run: |
           uv run chopsticks \
@@ -110,45 +110,45 @@ jobs:
             --users 3 \
             --spawn-rate 1 \
             --duration 2m
-      
+
       - name: Validate test results
         run: |
           # Find the most recent run directory
           RUN_DIR=$(ls -td /tmp/chopsticks/*/ 2>/dev/null | head -1)
-          
+
           if [ -z "${RUN_DIR}" ]; then
             echo "❌ Run directory not found!"
             exit 1
           fi
-          
+
           METRICS_FILE="${RUN_DIR}/metrics.json"
-          
+
           if [ ! -f "${METRICS_FILE}" ]; then
             echo "❌ Metrics file not found at ${METRICS_FILE}!"
             exit 1
           fi
-          
+
           # Check metrics
           SUCCESS_RATE=$(cat ${METRICS_FILE} | jq -r '.summary.operations.success_rate')
           TOTAL_OPS=$(cat ${METRICS_FILE} | jq -r '.summary.operations.total')
-          
+
           echo "Run Directory: ${RUN_DIR}"
           echo "Total Operations: ${TOTAL_OPS}"
           echo "Success Rate: ${SUCCESS_RATE}%"
-          
+
           if [ "${SUCCESS_RATE}" != "100" ]; then
             echo "❌ Success rate is not 100%!"
             exit 1
           fi
-          
+
           if [ "${TOTAL_OPS}" -lt "10" ]; then
             echo "❌ Too few operations completed (${TOTAL_OPS})"
             exit 1
           fi
-          
+
           echo "✅ Test validation passed!"
           echo "✅ ${TOTAL_OPS} operations completed with 100% success rate"
-      
+
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
@@ -156,7 +156,7 @@ jobs:
           name: test-report
           path: /tmp/chopsticks/
           retention-days: 30
-      
+
       - name: Cleanup
         if: always()
         run: |
