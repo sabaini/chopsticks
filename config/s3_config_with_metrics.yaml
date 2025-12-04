@@ -1,0 +1,39 @@
+# S3 Configuration with Metrics Example
+
+# S3 endpoint URL
+endpoint: http://10.240.47.47:80
+
+# AWS credentials
+access_key: Y2AFX47EKQX9MUBB55Y2
+secret_key: kv5QTxU5niUCCBwktKy2a4jfIusCOVDVSmcCJWMP
+
+# S3 bucket name
+bucket: chopsticks-test
+
+# AWS region
+region: default
+
+# Driver to use
+driver: s5cmd
+
+# Driver-specific configuration
+driver_config:
+  s5cmd_path: s5cmd
+
+# Metrics configuration
+metrics:
+  # Enable metrics collection
+  enabled: true
+  
+  # Prometheus HTTP endpoint settings
+  http_host: 0.0.0.0
+  http_port: 8090
+  
+  # Aggregation window in seconds
+  aggregation_window_seconds: 10
+  
+  # Directory to export metrics files
+  export_dir: /tmp/chopsticks_metrics
+  
+  # Test name for metadata
+  test_name: "S3 Load Test with Metrics"

@@ -8,19 +8,17 @@ class TestDownloadErrorHandling:
     """Test that scenarios properly handle download failures"""
 
     def test_large_objects_with_metrics_handles_none_download(self):
-        """Test that s3_large_objects_with_metrics handles None from download"""
-        from chopsticks.scenarios.s3_large_objects_with_metrics import (
-            S3LargeObjectsWithMetrics,
-        )
+        """Test that s3_large_objects scenario handles None from download with metrics recording"""
+        from chopsticks.scenarios.s3_large_objects import S3LargeObjectTest
 
         # Create a mock environment
         mock_env = Mock()
         mock_env.parsed_options = Mock()
 
         # Create scenario instance
-        scenario = S3LargeObjectsWithMetrics(mock_env)
+        scenario = S3LargeObjectTest(mock_env)
         scenario.uploaded_keys = ["test-key"]
-        scenario.object_size = 1024
+        scenario.object_size_bytes = 1024
 
         # Mock the client to return None on download
         scenario.client = Mock()
@@ -37,12 +35,10 @@ class TestDownloadErrorHandling:
 
         # Verify metric was recorded with failure
         assert scenario._record_metric.called
-        # Check positional args: (operation_type, key, size, start, end, success, ...)
-        call_args = scenario._record_metric.call_args[0]
-        assert call_args[5] is False  # success parameter
         # Check keyword args for error_code
         call_kwargs = scenario._record_metric.call_args[1]
         assert "error_code" in call_kwargs
+        assert call_kwargs["success"] is False
 
     def test_large_objects_handles_none_download(self):
         """Test that s3_large_objects handles None from download"""
