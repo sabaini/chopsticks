@@ -63,7 +63,7 @@ jobs:
           echo "ACCESS_KEY=${ACCESS_KEY}" >> $GITHUB_ENV
           echo "SECRET_KEY=${SECRET_KEY}" >> $GITHUB_ENV
 
-          # Create S3 config
+          # Create S3 config with metrics enabled
           mkdir -p config
           cat > config/s3_config.yaml <<EOF
           endpoint: http://127.0.0.1:80
@@ -74,6 +74,14 @@ jobs:
           driver: s5cmd
           driver_config:
             s5cmd_path: /usr/local/bin/s5cmd
+          
+          # Enable metrics collection
+          metrics:
+            enabled: true
+            http_host: 0.0.0.0
+            http_port: 8090
+            aggregation_window_seconds: 10
+            test_name: "CI Functional Test"
           EOF
 
           # Create scenario config for CI test
@@ -100,12 +108,12 @@ jobs:
         run: |
           s5cmd mb s3://chopsticks-ci-test
 
-      - name: Run S3 Large Object Test (2 minutes)
+      - name: Run S3 Large Object Test with Metrics (2 minutes)
         run: |
           uv run chopsticks \
             --workload-config config/s3_config.yaml \
             --scenario-config config/ci_scenario_config.yaml \
-            -f src/chopsticks/scenarios/s3_large_objects_with_metrics.py \
+            -f src/chopsticks/scenarios/s3_large_objects.py \
             --headless \
             --users 3 \
             --spawn-rate 1 \
