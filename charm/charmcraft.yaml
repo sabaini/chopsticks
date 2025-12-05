@@ -1,0 +1,150 @@
+# Chopsticks - Distributed Ceph Stress Testing Charm
+type: charm
+name: chopsticks
+title: Chopsticks Stress Testing
+summary: Distributed Ceph stress testing using Locust and Chopsticks
+description: |
+  Chopsticks is a flexible stress testing framework for Ceph storage.
+  This charm deploys distributed Locust workers for scalable load generation.
+
+base: ubuntu@24.04
+platforms:
+  amd64:
+  arm64:
+
+parts:
+  charm:
+    plugin: uv
+    source: .
+    build-snaps:
+      - astral-uv
+
+peers:
+  cluster:
+    interface: chopsticks-cluster
+
+config:
+  options:
+    repo-url:
+      type: string
+      default: https://github.com/sabaini/chopsticks.git
+      description: Git repository URL for the Chopsticks framework.
+
+    repo-branch:
+      type: string
+      default: main
+      description: Git branch or tag to checkout.
+
+    scenario-file:
+      type: string
+      default: src/chopsticks/scenarios/s3_large_objects.py
+      description: Path to the Locust scenario file within the cloned repository.
+
+    s3-endpoint:
+      type: string
+      default: ""
+      description: S3 or RGW endpoint URL (e.g., http://10.0.0.1:80).
+
+    s3-access-key:
+      type: string
+      default: ""
+      description: Access key for S3/RGW.
+
+    s3-secret-key:
+      type: string
+      default: ""
+      description: Secret key for S3/RGW.
+
+    s3-bucket:
+      type: string
+      default: test-bucket
+      description: Default bucket used by tests.
+
+    s3-region:
+      type: string
+      default: us-east-1
+      description: Region name for the S3 endpoint.
+
+    s3-driver:
+      type: string
+      default: s5cmd
+      description: S3 driver name (e.g., s5cmd).
+
+    s3-driver-config-yaml:
+      type: string
+      default: ""
+      description: |
+        Optional extra YAML to merge into driver_config.
+        Example: "s5cmd_path: /usr/local/bin/s5cmd"
+
+    locust-users:
+      type: int
+      default: 4
+      description: Total number of simulated users.
+
+    locust-spawn-rate:
+      type: float
+      default: 1.0
+      description: Rate at which users are spawned (users per second).
+
+    locust-duration:
+      type: string
+      default: 10m
+      description: Duration of the test (e.g., 5m, 1h).
+
+    locust-master-port:
+      type: int
+      default: 5557
+      description: Port for Locust master-worker communication.
+
+    locust-web-port:
+      type: int
+      default: 8089
+      description: Port for Locust web UI (when not headless).
+
+    locust-loglevel:
+      type: string
+      default: INFO
+      description: Log level for Locust (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+
+    autostart-workers:
+      type: boolean
+      default: true
+      description: |
+        If true, workers automatically start and wait for master.
+
+actions:
+  start-test:
+    description: Start a distributed Chopsticks/Locust test run.
+    params:
+      users:
+        type: integer
+        description: Override locust-users config (optional).
+      spawn-rate:
+        type: number
+        description: Override locust-spawn-rate config (optional).
+      duration:
+        type: string
+        description: Override locust-duration config (optional).
+      scenario-file:
+        type: string
+        description: Override scenario-file config for this run (optional).
+      headless:
+        type: boolean
+        default: true
+        description: Run in headless mode (no web UI).
+
+  stop-test:
+    description: Stop the current test run on master and all workers.
+
+  test-status:
+    description: Report the current test state and worker readiness.
+
+  fetch-metrics:
+    description: Retrieve metrics from the last test run.
+    params:
+      format:
+        type: string
+        enum: [summary, json, csv]
+        default: summary
+        description: Output format for metrics.

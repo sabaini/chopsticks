@@ -1,0 +1,10 @@
+# Test Scenario Configuration for Integration Tests
+# Uses very small objects and minimal resources for fast CI tests
+
+# S3 Large Objects scenario (s3_large_objects.py) - but with small objects for testing
+s3_large_objects:
+  # Object size in MB - use 1MB for fast tests
+  object_size_mb: 1
+  
+  # Maximum number of keys to keep in memory
+  max_keys_in_memory: 5
