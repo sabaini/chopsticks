@@ -20,8 +20,8 @@ DATA_DIR = Path("/var/lib/chopsticks")
 S3_CONFIG_PATH = CONFIG_DIR / "s3_config.yaml"
 SYSTEMD_DIR = Path("/etc/systemd/system")
 
-MASTER_SERVICE = "chopsticks-master"
-MASTER_WEBUI_SERVICE = "chopsticks-master-webui"
+LEADER_SERVICE = "chopsticks-leader"
+LEADER_WEBUI_SERVICE = "chopsticks-leader-webui"
 WORKER_SERVICE = "chopsticks-worker"
 
 
@@ -116,8 +116,8 @@ class ChopsticksCharm(ops.CharmBase):
             self._update_systemd_units()
 
             if self.unit.is_leader():
-                logger.debug("_on_config_changed: publishing master address (leader)")
-                self._publish_master_address()
+                logger.debug("_on_config_changed: publishing leader address")
+                self._publish_leader_address()
 
             if not self._is_config_valid():
                 logger.debug("_on_config_changed: config not valid, setting blocked status")
@@ -146,10 +146,10 @@ class ChopsticksCharm(ops.CharmBase):
         if self.unit.is_leader():
             test_state = self._get_peer_data("test_state", "idle")
             if test_state == "running":
-                master_running = self._is_service_running(MASTER_SERVICE)
-                if not master_running:
+                leader_running = self._is_service_running(LEADER_SERVICE)
+                if not leader_running:
                     logger.warning(
-                        "_on_update_status: test_state is 'running' but master service "
+                        "_on_update_status: test_state is 'running' but leader service "
                         "is not running; marking test as failed"
                     )
                     self._set_peer_data("test_state", "failed")
@@ -182,7 +182,7 @@ class ChopsticksCharm(ops.CharmBase):
             shutil.rmtree(DATA_DIR, ignore_errors=True)
             logger.info("Removed data: %s", DATA_DIR)
 
-        for service in [MASTER_SERVICE, MASTER_WEBUI_SERVICE, WORKER_SERVICE]:
+        for service in [LEADER_SERVICE, LEADER_WEBUI_SERVICE, WORKER_SERVICE]:
             service_path = SYSTEMD_DIR / f"{service}.service"
             if service_path.exists():
                 service_path.unlink()
@@ -193,14 +193,14 @@ class ChopsticksCharm(ops.CharmBase):
         """Handle leader election.
 
         If a test was running when the previous leader failed, mark it as
-        failed. Workers connected to the old master are now orphaned and their
+        failed. Workers connected to the old leader are now orphaned and their
         results are suspect, so we treat any in-progress test as failed.
         """
-        logger.info("_on_leader_elected: this unit is now the leader (Locust master)")
+        logger.info("_on_leader_elected: this unit is now the leader (Locust coordinator)")
         logger.debug("_on_leader_elected: stopping all services")
         self._stop_all_services()
-        logger.debug("_on_leader_elected: publishing master address")
-        self._publish_master_address()
+        logger.debug("_on_leader_elected: publishing leader address")
+        self._publish_leader_address()
 
         previous_state = self._get_peer_data("test_state", "idle")
         logger.debug("_on_leader_elected: previous test_state=%s", previous_state)
@@ -208,7 +208,7 @@ class ChopsticksCharm(ops.CharmBase):
             self._set_peer_data("test_state", "failed")
             logger.warning(
                 "Previous leader failed during test run; marking test as failed "
-                "(workers connected to old master, results suspect)"
+                "(workers connected to old leader, results suspect)"
             )
         else:
             self._set_peer_data("test_state", "idle")
@@ -219,8 +219,8 @@ class ChopsticksCharm(ops.CharmBase):
     def _on_cluster_changed(self, event: ops.RelationEvent) -> None:
         """Handle peer relation changes.
 
-        When master address changes (leader failover), workers must stop to
-        avoid running with a stale master address. Any running test is already
+        When leader address changes (leader failover), workers must stop to
+        avoid running with a stale leader address. Any running test is already
         marked as failed by _on_leader_elected on the new leader.
         """
         logger.debug(
@@ -229,18 +229,17 @@ class ChopsticksCharm(ops.CharmBase):
             self.unit.is_leader(),
         )
         if self.unit.is_leader():
-            logger.debug("_on_cluster_changed: publishing master address (leader)")
-            self._publish_master_address()
+            logger.debug("_on_cluster_changed: publishing leader address")
+            self._publish_leader_address()
         else:
-            new_master = self._get_peer_data("master_address", "")
+            new_leader = self._get_peer_data("leader_address", "")
             if self._is_service_running(WORKER_SERVICE):
                 self._stop_service(WORKER_SERVICE)
                 logger.info(
-                    "_on_cluster_changed: stopped worker due to master change "
-                    "(new master: %s)",
-                    new_master or "unknown",
+                    "_on_cluster_changed: stopped worker due to leader change (new leader: %s)",
+                    new_leader or "unknown",
                 )
-            if self.config.get("autostart-workers") and new_master:
+            if self.config.get("autostart-workers") and new_leader:
                 logger.debug("_on_cluster_changed: attempting to start worker (non-leader)")
                 self._maybe_start_worker()
 
@@ -303,31 +302,31 @@ class ChopsticksCharm(ops.CharmBase):
         logger.debug("_on_start_test_action: created metrics dir: %s", metrics_dir)
 
         try:
-            logger.debug("_on_start_test_action: stopping existing master services")
-            self._stop_service(MASTER_SERVICE)
-            self._stop_service(MASTER_WEBUI_SERVICE)
+            logger.debug("_on_start_test_action: stopping existing leader services")
+            self._stop_service(LEADER_SERVICE)
+            self._stop_service(LEADER_WEBUI_SERVICE)
 
             if headless:
-                logger.debug("_on_start_test_action: rendering and starting headless master")
-                self._render_master_service(
+                logger.debug("_on_start_test_action: rendering and starting headless leader")
+                self._render_leader_service(
                     test_run_id=test_run_id,
                     scenario_file=scenario,
                     users=users,
                     spawn_rate=spawn_rate,
                     duration=duration,
                 )
-                self._start_service(MASTER_SERVICE)
+                self._start_service(LEADER_SERVICE)
             else:
-                logger.debug("_on_start_test_action: rendering and starting webui master")
-                self._render_master_webui_service(scenario_file=scenario)
-                self._start_service(MASTER_WEBUI_SERVICE)
+                logger.debug("_on_start_test_action: rendering and starting webui leader")
+                self._render_leader_webui_service(scenario_file=scenario)
+                self._start_service(LEADER_WEBUI_SERVICE)
 
             logger.debug("_on_start_test_action: updating peer data for test run")
             self._set_peer_data("test_state", "running")
             self._set_peer_data("test_run_id", test_run_id)
             self._set_peer_data("scenario_file", scenario)
 
-            master_ip = self._get_private_ip()
+            leader_ip = self._get_private_ip()
             web_port = self.config.get("locust-web-port")
 
             result = {
@@ -342,7 +341,7 @@ class ChopsticksCharm(ops.CharmBase):
             }
 
             if not headless:
-                result["web-ui"] = f"http://{master_ip}:{web_port}"
+                result["web-ui"] = f"http://{leader_ip}:{web_port}"
 
             logger.info("_on_start_test_action: test started successfully, id=%s", test_run_id)
             event.set_results(result)
@@ -364,9 +363,9 @@ class ChopsticksCharm(ops.CharmBase):
         logger.debug("_on_stop_test_action: stopping test_run_id=%s", test_run_id)
 
         try:
-            logger.debug("_on_stop_test_action: stopping master services")
-            self._stop_service(MASTER_SERVICE)
-            self._stop_service(MASTER_WEBUI_SERVICE)
+            logger.debug("_on_stop_test_action: stopping leader services")
+            self._stop_service(LEADER_SERVICE)
+            self._stop_service(LEADER_WEBUI_SERVICE)
 
             self._set_peer_data("test_state", "stopped")
             logger.info("_on_stop_test_action: test stopped successfully")
@@ -386,20 +385,20 @@ class ChopsticksCharm(ops.CharmBase):
         logger.debug("_on_test_status_action: gathering status info")
         test_state = self._get_peer_data("test_state", "idle")
         test_run_id = self._get_peer_data("test_run_id", "")
-        master_address = self._get_peer_data("master_address", "")
+        leader_address = self._get_peer_data("leader_address", "")
 
-        master_running = self._is_service_running(MASTER_SERVICE)
-        master_webui_running = self._is_service_running(MASTER_WEBUI_SERVICE)
+        leader_running = self._is_service_running(LEADER_SERVICE)
+        leader_webui_running = self._is_service_running(LEADER_WEBUI_SERVICE)
         worker_running = self._is_service_running(WORKER_SERVICE)
 
         worker_count = self._count_peer_units()
 
         logger.debug(
-            "_on_test_status_action: test_state=%s, master_running=%s, "
-            "master_webui_running=%s, worker_running=%s, worker_count=%d",
+            "_on_test_status_action: test_state=%s, leader_running=%s, "
+            "leader_webui_running=%s, worker_running=%s, worker_count=%d",
             test_state,
-            master_running,
-            master_webui_running,
+            leader_running,
+            leader_webui_running,
             worker_running,
             worker_count,
         )
@@ -407,9 +406,9 @@ class ChopsticksCharm(ops.CharmBase):
         result = {
             "test-state": test_state,
             "test-run-id": test_run_id,
-            "master-address": master_address,
+            "leader-address": leader_address,
             "is-leader": self.unit.is_leader(),
-            "master-running": master_running or master_webui_running,
+            "leader-running": leader_running or leader_webui_running,
             "worker-running": worker_running,
             "worker-count": worker_count,
         }
@@ -610,16 +609,16 @@ class ChopsticksCharm(ops.CharmBase):
         required = ["s3-endpoint", "s3-access-key", "s3-secret-key"]
         return all(self.config.get(key) for key in required)
 
-    def _publish_master_address(self) -> None:
-        """Publish master address to peer relation."""
+    def _publish_leader_address(self) -> None:
+        """Publish leader address to peer relation."""
         if not self.unit.is_leader():
             return
 
-        master_ip = self._get_private_ip()
-        if master_ip:
-            self._set_peer_data("master_address", master_ip)
-            self._set_peer_data("master_unit", self.unit.name)
-            logger.info("Published master address: %s", master_ip)
+        leader_ip = self._get_private_ip()
+        if leader_ip:
+            self._set_peer_data("leader_address", leader_ip)
+            self._set_peer_data("leader_unit", self.unit.name)
+            logger.info("Published leader address: %s", leader_ip)
 
     def _get_private_ip(self) -> str:
         """Get this unit's private IP address."""
@@ -637,7 +636,7 @@ class ChopsticksCharm(ops.CharmBase):
         return ""
 
     def _maybe_start_worker(self) -> None:
-        """Start worker service if master address is known."""
+        """Start worker service if leader address is known."""
         logger.debug("_maybe_start_worker: checking if we should start worker")
         if self.unit.is_leader():
             logger.debug("_maybe_start_worker: skipping - this is the leader")
@@ -651,16 +650,16 @@ class ChopsticksCharm(ops.CharmBase):
             logger.debug("_maybe_start_worker: config not valid, not starting worker")
             return
 
-        master_address = self._get_peer_data("master_address", "")
-        if not master_address:
-            logger.debug("_maybe_start_worker: master address not yet known")
+        leader_address = self._get_peer_data("leader_address", "")
+        if not leader_address:
+            logger.debug("_maybe_start_worker: leader address not yet known")
             return
 
-        logger.debug("_maybe_start_worker: rendering worker service for master=%s", master_address)
-        self._render_worker_service(master_address)
+        logger.debug("_maybe_start_worker: rendering worker service for leader=%s", leader_address)
+        self._render_worker_service(leader_address)
         self._start_service(WORKER_SERVICE)
         logger.info(
-            "_maybe_start_worker: started worker connecting to master at %s", master_address
+            "_maybe_start_worker: started worker connecting to leader at %s", leader_address
         )
 
     def _count_peer_units(self) -> int:
@@ -685,22 +684,22 @@ class ChopsticksCharm(ops.CharmBase):
 
         if self.unit.is_leader():
             worker_count = self._count_peer_units()
-            status_msg = f"Master ready ({worker_count} workers, test: {test_state})"
+            status_msg = f"Leader ready ({worker_count} workers, test: {test_state})"
             logger.debug("_set_ready_status: leader status=%s", status_msg)
             self.unit.status = ops.ActiveStatus(status_msg)
         else:
-            master_address = self._get_peer_data("master_address", "")
-            if master_address:
+            leader_address = self._get_peer_data("leader_address", "")
+            if leader_address:
                 worker_running = self._is_service_running(WORKER_SERVICE)
                 status = "connected" if worker_running else "ready"
-                status_msg = f"Worker {status} -> {master_address}"
+                status_msg = f"Worker {status} -> {leader_address}"
                 logger.debug("_set_ready_status: worker status=%s", status_msg)
                 self.unit.status = ops.ActiveStatus(status_msg)
             else:
-                logger.debug("_set_ready_status: waiting for master address")
-                self.unit.status = ops.WaitingStatus("Waiting for master address")
+                logger.debug("_set_ready_status: waiting for leader address")
+                self.unit.status = ops.WaitingStatus("Waiting for leader address")
 
-    def _master_service_content(
+    def _leader_service_content(
         self,
         test_run_id: str,
         scenario_file: str,
@@ -708,13 +707,13 @@ class ChopsticksCharm(ops.CharmBase):
         spawn_rate: float,
         duration: str,
     ) -> str:
-        """Generate systemd unit content for the headless master service."""
-        master_port = self.config.get("locust-master-port")
+        """Generate systemd unit content for the headless leader service."""
+        leader_port = self.config.get("locust-master-port")
         loglevel = self.config.get("locust-loglevel") or "INFO"
         scenario_path = REPO_DIR / scenario_file
 
         return f"""[Unit]
-Description=Chopsticks Locust Master
+Description=Chopsticks Locust Leader
 After=network.target
 
 [Service]
@@ -726,7 +725,7 @@ Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart={VENV_DIR}/bin/python -m locust \\
     -f {scenario_path} \\
     --master \\
-    --master-bind-port={master_port} \\
+    --master-bind-port={leader_port} \\
     --loglevel={loglevel} \\
     --headless \\
     --users={users} \\
@@ -742,15 +741,15 @@ StandardError=journal
 WantedBy=multi-user.target
 """
 
-    def _master_webui_service_content(self, scenario_file: str) -> str:
-        """Generate systemd unit content for master with web UI."""
-        master_port = self.config.get("locust-master-port")
+    def _leader_webui_service_content(self, scenario_file: str) -> str:
+        """Generate systemd unit content for leader with web UI."""
+        leader_port = self.config.get("locust-master-port")
         web_port = self.config.get("locust-web-port")
         loglevel = self.config.get("locust-loglevel") or "INFO"
         scenario_path = REPO_DIR / scenario_file
 
         return f"""[Unit]
-Description=Chopsticks Locust Master with Web UI
+Description=Chopsticks Locust Leader with Web UI
 After=network.target
 
 [Service]
@@ -762,7 +761,7 @@ Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart={VENV_DIR}/bin/python -m locust \\
     -f {scenario_path} \\
     --master \\
-    --master-bind-port={master_port} \\
+    --master-bind-port={leader_port} \\
     --loglevel={loglevel} \\
     --web-port={web_port}
 Restart=no
@@ -773,9 +772,9 @@ StandardError=journal
 WantedBy=multi-user.target
 """
 
-    def _worker_service_content(self, master_host: str) -> str:
+    def _worker_service_content(self, leader_host: str) -> str:
         """Generate systemd unit content for the worker service."""
-        master_port = self.config.get("locust-master-port")
+        leader_port = self.config.get("locust-master-port")
         loglevel = self.config.get("locust-loglevel") or "INFO"
         scenario_file = self._get_peer_data("scenario_file") or self.config.get("scenario-file")
         scenario_path = REPO_DIR / scenario_file
@@ -793,8 +792,8 @@ Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart={VENV_DIR}/bin/python -m locust \\
     -f {scenario_path} \\
     --worker \\
-    --master-host={master_host} \\
-    --master-port={master_port} \\
+    --master-host={leader_host} \\
+    --master-port={leader_port} \\
     --loglevel={loglevel}
 Restart=on-failure
 RestartSec=5
@@ -812,11 +811,11 @@ WantedBy=multi-user.target
     def _update_systemd_units(self) -> None:
         """Update systemd units with current configuration."""
         if not self.unit.is_leader():
-            master_address = self._get_peer_data("master_address", "")
-            if master_address:
-                self._render_worker_service(master_address)
+            leader_address = self._get_peer_data("leader_address", "")
+            if leader_address:
+                self._render_worker_service(leader_address)
 
-    def _render_master_service(
+    def _render_leader_service(
         self,
         test_run_id: str,
         scenario_file: str,
@@ -824,28 +823,28 @@ WantedBy=multi-user.target
         spawn_rate: float,
         duration: str,
     ) -> None:
-        """Render and install the master systemd service file."""
-        content = self._master_service_content(
+        """Render and install the leader systemd service file."""
+        content = self._leader_service_content(
             test_run_id=test_run_id,
             scenario_file=scenario_file,
             users=users,
             spawn_rate=spawn_rate,
             duration=duration,
         )
-        service_path = SYSTEMD_DIR / f"{MASTER_SERVICE}.service"
+        service_path = SYSTEMD_DIR / f"{LEADER_SERVICE}.service"
         service_path.write_text(content)
         subprocess.run(["systemctl", "daemon-reload"], check=True, capture_output=True)
 
-    def _render_master_webui_service(self, scenario_file: str) -> None:
-        """Render and install the master with web UI systemd service file."""
-        content = self._master_webui_service_content(scenario_file=scenario_file)
-        service_path = SYSTEMD_DIR / f"{MASTER_WEBUI_SERVICE}.service"
+    def _render_leader_webui_service(self, scenario_file: str) -> None:
+        """Render and install the leader with web UI systemd service file."""
+        content = self._leader_webui_service_content(scenario_file=scenario_file)
+        service_path = SYSTEMD_DIR / f"{LEADER_WEBUI_SERVICE}.service"
         service_path.write_text(content)
         subprocess.run(["systemctl", "daemon-reload"], check=True, capture_output=True)
 
-    def _render_worker_service(self, master_host: str) -> None:
+    def _render_worker_service(self, leader_host: str) -> None:
         """Render and install the worker systemd service file."""
-        content = self._worker_service_content(master_host=master_host)
+        content = self._worker_service_content(leader_host=leader_host)
         service_path = SYSTEMD_DIR / f"{WORKER_SERVICE}.service"
         service_path.write_text(content)
         subprocess.run(["systemctl", "daemon-reload"], check=True, capture_output=True)
@@ -883,7 +882,7 @@ WantedBy=multi-user.target
     def _stop_all_services(self) -> None:
         """Stop all Chopsticks services."""
         logger.debug("_stop_all_services: stopping all services")
-        for service in [MASTER_SERVICE, MASTER_WEBUI_SERVICE, WORKER_SERVICE]:
+        for service in [LEADER_SERVICE, LEADER_WEBUI_SERVICE, WORKER_SERVICE]:
             self._stop_service(service)
 
 

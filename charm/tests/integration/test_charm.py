@@ -120,7 +120,7 @@ class TestLeaderElection:
         juju: jubilant.Juju,
         microceph_s3: dict[str, str],
     ) -> None:
-        """Verify leader is elected and workers discover master address."""
+        """Verify leader is elected and workers discover leader address."""
         if "chopsticks" not in juju.status().apps:
             juju.deploy(str(charm.resolve()), app="chopsticks", num_units=3)
             juju.wait(
@@ -153,11 +153,11 @@ class TestLeaderElection:
         status = juju.status()
         leader_unit = None
         for unit_name, unit in status.apps["chopsticks"].units.items():
-            if "Master ready" in unit.workload_status.message:
+            if "Leader ready" in unit.workload_status.message:
                 leader_unit = unit_name
                 break
 
-        assert leader_unit is not None, "Should have a leader with 'Master ready' status"
+        assert leader_unit is not None, "Should have a leader with 'Leader ready' status"
 
         for unit_name, unit in status.apps["chopsticks"].units.items():
             if unit_name != leader_unit:
@@ -192,7 +192,7 @@ class TestStartTest:
         logger.info("Verifying test state via status action...")
         status_result = juju.run(leader, "test-status")
         assert status_result.results["test-state"] == "running"
-        assert status_result.results["master-running"] == "True"
+        assert status_result.results["leader-running"] == "True"
 
         logger.info("Waiting for test to complete...")
         time.sleep(25)
@@ -242,7 +242,7 @@ class TestStopTest:
         logger.info("Verifying test state...")
         status_result = juju.run(leader, "test-status")
         assert status_result.results["test-state"] == "stopped"
-        assert status_result.results["master-running"] == "False"
+        assert status_result.results["leader-running"] == "False"
 
     def _ensure_running_test(
         self,

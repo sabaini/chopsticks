@@ -41,13 +41,13 @@ def test_start_without_config_sets_blocked_status(harness: testing.Harness):
 def test_start_with_valid_config_sets_waiting_status(
     harness: testing.Harness, valid_s3_config: dict
 ):
-    """Test that start with valid config sets WaitingStatus (no master yet)."""
+    """Test that start with valid config sets WaitingStatus (no leader yet)."""
     harness.update_config(valid_s3_config)
     harness.add_relation("cluster", "chopsticks")
     harness.begin()
     harness.charm.on.start.emit()
     assert harness.charm.unit.status.name == "waiting"
-    assert "Waiting for master address" in harness.charm.unit.status.message
+    assert "Waiting for leader address" in harness.charm.unit.status.message
 
 
 def test_start_as_leader_sets_active_status(harness: testing.Harness, valid_s3_config: dict):
@@ -58,7 +58,7 @@ def test_start_as_leader_sets_active_status(harness: testing.Harness, valid_s3_c
     harness.begin()
     harness.charm.on.start.emit()
     assert harness.charm.unit.status.name == "active"
-    assert "Master ready" in harness.charm.unit.status.message
+    assert "Leader ready" in harness.charm.unit.status.message
 
 
 def test_is_config_valid_with_all_required_fields(harness: testing.Harness, valid_s3_config: dict):
@@ -201,12 +201,12 @@ def test_test_status_action_returns_status(harness: testing.Harness, valid_s3_co
     harness.update_relation_data(
         rel_id,
         harness.charm.app.name,
-        {"test_state": "idle", "master_address": "10.0.0.1"},
+        {"test_state": "idle", "leader_address": "10.0.0.1"},
     )
 
     result = harness.run_action("test-status")
     assert result.results["test-state"] == "idle"
-    assert result.results["master-address"] == "10.0.0.1"
+    assert result.results["leader-address"] == "10.0.0.1"
     assert result.results["is-leader"] is True
 
 
@@ -227,10 +227,10 @@ def test_maybe_start_worker_skipped_without_valid_config(harness: testing.Harnes
     harness.charm._maybe_start_worker()
 
 
-def test_maybe_start_worker_skipped_without_master_address(
+def test_maybe_start_worker_skipped_without_leader_address(
     harness: testing.Harness, valid_s3_config: dict
 ):
-    """Test _maybe_start_worker does nothing when master address not set."""
+    """Test _maybe_start_worker does nothing when leader address not set."""
     harness.set_leader(False)
     harness.update_config(valid_s3_config)
     harness.add_relation("cluster", "chopsticks")
@@ -238,15 +238,15 @@ def test_maybe_start_worker_skipped_without_master_address(
     harness.charm._maybe_start_worker()
 
 
-def test_master_service_content_generates_valid_unit(
+def test_leader_service_content_generates_valid_unit(
     harness: testing.Harness, valid_s3_config: dict
 ):
-    """Test _master_service_content generates valid systemd unit."""
+    """Test _leader_service_content generates valid systemd unit."""
     valid_s3_config["locust-master-port"] = 5557
     harness.update_config(valid_s3_config)
     harness.begin()
 
-    content = harness.charm._master_service_content(
+    content = harness.charm._leader_service_content(
         test_run_id="test-123",
         scenario_file="scenarios/test.py",
         users=10,
@@ -264,16 +264,16 @@ def test_master_service_content_generates_valid_unit(
     assert "test-123" in content
 
 
-def test_master_webui_service_content_generates_valid_unit(
+def test_leader_webui_service_content_generates_valid_unit(
     harness: testing.Harness, valid_s3_config: dict
 ):
-    """Test _master_webui_service_content generates valid systemd unit."""
+    """Test _leader_webui_service_content generates valid systemd unit."""
     valid_s3_config["locust-master-port"] = 5557
     valid_s3_config["locust-web-port"] = 8089
     harness.update_config(valid_s3_config)
     harness.begin()
 
-    content = harness.charm._master_webui_service_content(
+    content = harness.charm._leader_webui_service_content(
         scenario_file="scenarios/test.py",
     )
     assert "[Unit]" in content
@@ -293,7 +293,7 @@ def test_worker_service_content_generates_valid_unit(
     harness.add_relation("cluster", "chopsticks")
     harness.begin()
 
-    content = harness.charm._worker_service_content(master_host="10.0.0.1")
+    content = harness.charm._worker_service_content(leader_host="10.0.0.1")
     assert "[Unit]" in content
     assert "[Service]" in content
     assert "--worker" in content
@@ -317,6 +317,6 @@ def test_worker_service_content_uses_peer_data_scenario(
         {"scenario_file": "scenarios/override.py"},
     )
 
-    content = harness.charm._worker_service_content(master_host="10.0.0.1")
+    content = harness.charm._worker_service_content(leader_host="10.0.0.1")
     assert "scenarios/override.py" in content
     assert "scenarios/default.py" not in content

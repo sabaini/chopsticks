@@ -4,12 +4,12 @@ A Juju charm for distributed Ceph stress testing using [Locust](https://locust.i
 
 ## Overview
 
-This charm deploys distributed Locust workers for scalable load generation against Ceph S3 (RGW) endpoints. The leader unit runs as the Locust master, while all other units run as workers that connect to it.
+This charm deploys distributed Locust workers for scalable load generation against Ceph S3 (RGW) endpoints. The leader unit runs as the Locust coordinator, while all other units run as workers that connect to it.
 
 ## Quick Start
 
 ```bash
-# Deploy with 5 units (1 master + 4 workers)
+# Deploy with 5 units (1 leader + 4 workers)
 juju deploy ./chopsticks -n 5
 
 # Configure S3 endpoint
@@ -84,13 +84,13 @@ juju run chopsticks/leader fetch-metrics format=summary
 
 ## Systemd Services
 
-- `chopsticks-master.service` - Headless master
-- `chopsticks-master-webui.service` - Master with web UI
+- `chopsticks-leader.service` - Headless leader
+- `chopsticks-leader-webui.service` - Leader with web UI
 - `chopsticks-worker.service` - Worker process
 
 Check logs:
 ```bash
-juju ssh chopsticks/0 -- journalctl -u chopsticks-master -f
+juju ssh chopsticks/0 -- journalctl -u chopsticks-leader -f
 juju ssh chopsticks/1 -- journalctl -u chopsticks-worker -f
 ```
 

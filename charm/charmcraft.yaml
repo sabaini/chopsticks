@@ -95,7 +95,7 @@ config:
     locust-master-port:
       type: int
       default: 5557
-      description: Port for Locust master-worker communication.
+      description: Port for Locust leader-worker communication.
 
     locust-web-port:
       type: int
@@ -111,7 +111,7 @@ config:
       type: boolean
       default: true
       description: |
-        If true, workers automatically start and wait for master.
+        If true, workers automatically start and wait for leader.
 
 actions:
   start-test:
@@ -135,7 +135,7 @@ actions:
         description: Run in headless mode (no web UI).
 
   stop-test:
-    description: Stop the current test run on master and all workers.
+    description: Stop the current test run on leader and all workers.
 
   test-status:
     description: Report the current test state and worker readiness.
