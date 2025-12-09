@@ -207,17 +207,19 @@ class MetricsCollector:
                 "total": total_operations,
                 "successful": successful,
                 "failed": failed,
-                "success_rate": (successful / total_operations) * 100
-                if total_operations > 0
-                else 0,
+                "success_rate": (
+                    (successful / total_operations) * 100 if total_operations > 0 else 0
+                ),
             },
             "overall_performance": {
-                "duration_ms": self._compute_statistics(durations).to_dict()
-                if durations
-                else {},
-                "throughput_mbps": self._compute_statistics(throughputs).to_dict()
-                if throughputs
-                else {},
+                "duration_ms": (
+                    self._compute_statistics(durations).to_dict() if durations else {}
+                ),
+                "throughput_mbps": (
+                    self._compute_statistics(throughputs).to_dict()
+                    if throughputs
+                    else {}
+                ),
             },
             "by_operation": operation_summaries,
             "errors": {

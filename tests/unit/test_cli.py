@@ -3,13 +3,20 @@
 import pytest
 from unittest.mock import patch
 
-from chopsticks.cli import (
-    parse_args,
+from chopsticks.cli import create_parser
+from chopsticks.commands.run import (
     validate_config_paths,
     validate_arguments,
     build_locust_command,
     set_environment_variables,
 )
+
+
+def parse_args(argv):
+    """Helper function to parse arguments for tests"""
+    parser = create_parser()
+    # Prepend 'run' command to argv for backward compatibility with tests
+    return parser.parse_args(["run"] + argv)
 
 
 class TestParseArgs:

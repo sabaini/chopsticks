@@ -37,3 +37,9 @@ metrics:
   
   # Test name for metadata
   test_name: "S3 Load Test with Metrics"
+  
+  # Persistent server settings
+  persistent:
+    enabled: true
+    pid_file: /tmp/chopsticks_metrics.pid
+    state_file: /tmp/chopsticks_metrics_state.json

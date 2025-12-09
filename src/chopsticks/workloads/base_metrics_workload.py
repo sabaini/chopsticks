@@ -13,14 +13,15 @@ from chopsticks.metrics import (
     OperationType,
     WorkloadType,
 )
-from chopsticks.metrics.http_server import MetricsHTTPServer
+from chopsticks.metrics.ipc import MetricsIPCClient
 
 
 # Global metrics instances (shared across all workload instances)
-_metrics_server: Optional[MetricsHTTPServer] = None
 _metrics_collector: Optional[MetricsCollector] = None
 _test_config: Optional[TestConfiguration] = None
+_metrics_ipc_client: Optional[MetricsIPCClient] = None
 _metrics_enabled = False
+_export_dir: Optional[str] = None  # Store the actual export directory to use
 
 
 def load_workload_config() -> dict:
@@ -48,6 +49,25 @@ def load_workload_config() -> dict:
         return load_config(config_path)
 
     return {}
+
+
+def _create_metrics_export_dir(base_dir: str, test_run_id: str) -> str:
+    """
+    Create a timestamped subdirectory for metrics export.
+
+    Args:
+        base_dir: Base directory for metrics (from config or default to cwd)
+        test_run_id: UUID for this test run
+
+    Returns:
+        Full path to the export directory
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Create subdirectory: <base_dir>/chopsticks_<timestamp>_<short_uuid>
+    short_uuid = test_run_id.split("-")[0]
+    subdir_name = f"chopsticks_{timestamp}_{short_uuid}"
+    export_dir = os.path.join(base_dir, subdir_name)
+    return export_dir
 
 
 def get_metrics_config(workload_config: dict) -> dict:
@@ -87,7 +107,7 @@ def get_metrics_config(workload_config: dict) -> dict:
         ),
         "export_dir": metrics_section.get(
             "export_dir",
-            os.environ.get("CHOPSTICKS_RUN_DIR", "/tmp/chopsticks_metrics"),
+            os.environ.get("CHOPSTICKS_RUN_DIR", os.getcwd()),
         ),
         "test_name": metrics_section.get(
             "test_name", os.environ.get("CHOPSTICKS_TEST_NAME", "Chopsticks Load Test")
@@ -98,7 +118,12 @@ def get_metrics_config(workload_config: dict) -> dict:
 @events.init.add_listener
 def on_locust_init(environment, **kwargs):
     """Initialize metrics collection when Locust starts"""
-    global _metrics_server, _metrics_collector, _test_config, _metrics_enabled
+    global \
+        _metrics_collector, \
+        _test_config, \
+        _metrics_ipc_client, \
+        _metrics_enabled, \
+        _export_dir
 
     # Load workload config to check metrics settings
     workload_config = load_workload_config()
@@ -110,54 +135,80 @@ def on_locust_init(environment, **kwargs):
         return
 
     # Create test configuration
+    test_run_id = str(uuid.uuid4())
     _test_config = TestConfiguration(
-        test_run_id=str(uuid.uuid4()),
+        test_run_id=test_run_id,
         test_name=config["test_name"],
         start_time=datetime.utcnow(),
         scenario=os.environ.get("CHOPSTICKS_SCENARIO", "unknown"),
         workload_type=WorkloadType.S3,  # Will be overridden by specific workload
         test_config={
-            "users": environment.parsed_options.num_users
-            if hasattr(environment, "parsed_options")
-            else 1,
+            "users": (
+                environment.parsed_options.num_users
+                if hasattr(environment, "parsed_options")
+                else 1
+            ),
         },
     )
 
-    # Initialize metrics collector
+    # Create export directory with timestamp subdirectory
+    base_export_dir = config["export_dir"]
+    run_dir = os.environ.get("CHOPSTICKS_RUN_DIR")
+
+    if run_dir and run_dir == base_export_dir:
+        # Run command already created a timestamped directory AND it matches export_dir
+        # Use it directly (don't create another subdirectory)
+        _export_dir = base_export_dir
+    else:
+        # Either no run command, or config specified different export_dir
+        # Create a timestamped subdirectory
+        _export_dir = _create_metrics_export_dir(base_export_dir, test_run_id)
+
+    config["export_dir"] = _export_dir
+
+    # Initialize metrics collector (for local JSON/CSV export)
     _metrics_collector = MetricsCollector(
         test_run_id=_test_config.test_run_id,
         test_config=_test_config,
         aggregation_window_seconds=config["aggregation_window"],
     )
 
-    # Start metrics HTTP server
-    _metrics_server = MetricsHTTPServer(
-        host=config["http_host"], port=config["http_port"]
-    )
-    _metrics_server.start()
-
-    print(f"\n{'=' * 70}")
-    print("Metrics Collection Enabled")
-    print(f"{'=' * 70}")
-    print(f"Test Run ID: {_test_config.test_run_id}")
-    print(
-        f"Metrics Endpoint: http://{config['http_host']}:{config['http_port']}/metrics"
-    )
-    print(f"Export Directory: {config['export_dir']}")
-    print(f"{'=' * 70}\n")
+    # Initialize IPC client to send metrics to persistent server
+    _metrics_ipc_client = MetricsIPCClient()
+    if _metrics_ipc_client.connect():
+        print(f"\n{'=' * 70}")
+        print("Metrics Collection Enabled")
+        print(f"{'=' * 70}")
+        print(f"Test Run ID: {_test_config.test_run_id}")
+        print(f"Export Directory: {config['export_dir']}")
+        print("Connected to persistent metrics server")
+        print(f"{'=' * 70}\n")
+    else:
+        print(f"\n{'=' * 70}")
+        print("Metrics Collection Enabled (WARNING: No persistent server)")
+        print(f"{'=' * 70}")
+        print(f"Test Run ID: {_test_config.test_run_id}")
+        print(f"Export Directory: {config['export_dir']}")
+        print("Real-time metrics unavailable - only end-of-test export")
+        print(f"{'=' * 70}\n")
 
 
 @events.quitting.add_listener
 def on_locust_quit(environment, **kwargs):
     """Export metrics when Locust quits"""
-    global _metrics_server, _metrics_collector, _test_config, _metrics_enabled
+    global \
+        _metrics_collector, \
+        _test_config, \
+        _metrics_ipc_client, \
+        _metrics_enabled, \
+        _export_dir
 
     if not _metrics_enabled or not _metrics_collector:
         return
 
-    # Reload config for export directory
-    workload_config = load_workload_config()
-    config = get_metrics_config(workload_config)
+    # Close IPC client
+    if _metrics_ipc_client:
+        _metrics_ipc_client.close()
 
     # Update test end time
     _test_config.end_time = datetime.utcnow()
@@ -165,8 +216,8 @@ def on_locust_quit(environment, **kwargs):
         (_test_config.end_time - _test_config.start_time).total_seconds()
     )
 
-    # Export metrics
-    output_dir = config["export_dir"]
+    # Export metrics to the directory determined during init
+    output_dir = _export_dir
     os.makedirs(output_dir, exist_ok=True)
 
     _metrics_collector.export_json(f"{output_dir}/metrics.json")
@@ -181,11 +232,8 @@ def on_locust_quit(environment, **kwargs):
     print(f"{'=' * 70}")
     print(f"Total Operations: {summary['operations']['total']}")
     print(f"Success Rate: {summary['operations']['success_rate']:.2f}%")
-    print(f"Metrics exported to: {output_dir}")
+    print(f"Metrics exported to: {_export_dir}")
     print(f"{'=' * 70}\n")
-
-    if _metrics_server:
-        _metrics_server.stop()
 
 
 class BaseMetricsWorkload:
@@ -196,10 +244,6 @@ class BaseMetricsWorkload:
     def get_metrics_collector(self) -> Optional[MetricsCollector]:
         """Get the global metrics collector instance"""
         return _metrics_collector if _metrics_enabled else None
-
-    def get_metrics_server(self) -> Optional[MetricsHTTPServer]:
-        """Get the global metrics HTTP server instance"""
-        return _metrics_server if _metrics_enabled else None
 
     def record_operation_metric(
         self,
@@ -245,13 +289,13 @@ class BaseMetricsWorkload:
             metadata=metadata or {},
         )
 
-        # Record to collector
+        # Record to local collector (for JSON/CSV export at end)
         if _metrics_collector:
             _metrics_collector.record_operation(metric)
 
-        # Record to Prometheus exporter
-        if _metrics_server:
-            _metrics_server.get_exporter().add_operation_metric(metric)
+        # Send to persistent server via IPC
+        if _metrics_ipc_client:
+            _metrics_ipc_client.send_metric(metric)
 
     def _record_metric(
         self,

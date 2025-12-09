@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  s3-stress-test:
+  s3-large-objects-test:
+    name: S3 Large Objects Test (Basic)
     runs-on: ubuntu-22.04
     timeout-minutes: 30
 
@@ -36,14 +37,14 @@ jobs:
         run: |
           sudo snap install microceph --channel=latest/stable
           sudo microceph cluster bootstrap
-
+          
           # Create loop devices for OSDs
           for i in 1 2 3; do
             sudo truncate -s 10G /tmp/osd${i}.img
             LOOP_DEV=$(sudo losetup -f --show /tmp/osd${i}.img)
             sudo microceph disk add ${LOOP_DEV} --wipe
           done
-
+          
           # Enable RGW
           sudo microceph enable rgw
           sleep 10
@@ -56,14 +57,14 @@ jobs:
             --uid=chopsticks-ci \
             --display-name="Chopsticks CI" \
             --email=ci@chopsticks.io > /tmp/s3_user.json
-
+          
           ACCESS_KEY=$(cat /tmp/s3_user.json | jq -r ".keys[0].access_key")
           SECRET_KEY=$(cat /tmp/s3_user.json | jq -r ".keys[0].secret_key")
-
+          
           echo "ACCESS_KEY=${ACCESS_KEY}" >> $GITHUB_ENV
           echo "SECRET_KEY=${SECRET_KEY}" >> $GITHUB_ENV
-
-          # Create S3 config with metrics enabled
+          
+          # Create S3 config WITHOUT metrics
           mkdir -p config
           cat > config/s3_config.yaml <<EOF
           endpoint: http://127.0.0.1:80
@@ -74,16 +75,8 @@ jobs:
           driver: s5cmd
           driver_config:
             s5cmd_path: /usr/local/bin/s5cmd
-          
-          # Enable metrics collection
-          metrics:
-            enabled: true
-            http_host: 0.0.0.0
-            http_port: 8090
-            aggregation_window_seconds: 10
-            test_name: "CI Functional Test"
           EOF
-
+          
           # Create scenario config for CI test
           cat > config/ci_scenario_config.yaml <<EOF
           s3_large_objects:
@@ -108,9 +101,9 @@ jobs:
         run: |
           s5cmd mb s3://chopsticks-ci-test
 
-      - name: Run S3 Large Object Test with Metrics (2 minutes)
+      - name: Run S3 Large Object Test (2 minutes)
         run: |
-          uv run chopsticks \
+          uv run chopsticks run \
             --workload-config config/s3_config.yaml \
             --scenario-config config/ci_scenario_config.yaml \
             -f src/chopsticks/scenarios/s3_large_objects.py \
@@ -119,54 +112,340 @@ jobs:
             --spawn-rate 1 \
             --duration 2m
 
-      - name: Validate test results
+      - name: Validate Locust report files exist
         run: |
           # Find the most recent run directory
           RUN_DIR=$(ls -td /tmp/chopsticks/*/ 2>/dev/null | head -1)
-
+          
           if [ -z "${RUN_DIR}" ]; then
             echo "❌ Run directory not found!"
             exit 1
           fi
-
-          METRICS_FILE="${RUN_DIR}/metrics.json"
-
-          if [ ! -f "${METRICS_FILE}" ]; then
-            echo "❌ Metrics file not found at ${METRICS_FILE}!"
-            exit 1
-          fi
-
-          # Check metrics
-          SUCCESS_RATE=$(cat ${METRICS_FILE} | jq -r '.summary.operations.success_rate')
-          TOTAL_OPS=$(cat ${METRICS_FILE} | jq -r '.summary.operations.total')
-
+          
           echo "Run Directory: ${RUN_DIR}"
-          echo "Total Operations: ${TOTAL_OPS}"
-          echo "Success Rate: ${SUCCESS_RATE}%"
-
-          if [ "${SUCCESS_RATE}" != "100" ]; then
-            echo "❌ Success rate is not 100%!"
+          echo "Contents:"
+          ls -lah ${RUN_DIR}
+          
+          # Check for Locust HTML report
+          if [ ! -f "${RUN_DIR}/locust_report.html" ]; then
+            echo "❌ Locust HTML report not found!"
             exit 1
           fi
-
-          if [ "${TOTAL_OPS}" -lt "10" ]; then
-            echo "❌ Too few operations completed (${TOTAL_OPS})"
+          
+          # Check for Locust CSV files
+          if [ ! -f "${RUN_DIR}/locust_stats.csv" ]; then
+            echo "❌ Locust stats CSV not found!"
             exit 1
           fi
+          
+          echo "✅ Locust report files validated"
+          
+          # Parse and validate CSV stats
+          echo "Checking Locust statistics..."
+          TOTAL_REQUESTS=$(tail -n 1 ${RUN_DIR}/locust_stats.csv | cut -d',' -f3 | tr -d '"')
+          FAILED_REQUESTS=$(tail -n 1 ${RUN_DIR}/locust_stats.csv | cut -d',' -f4 | tr -d '"')
+          
+          echo "Total Requests: ${TOTAL_REQUESTS}"
+          echo "Failed Requests: ${FAILED_REQUESTS}"
+          
+          if [ "${TOTAL_REQUESTS}" -lt "10" ]; then
+            echo "❌ Too few requests completed (${TOTAL_REQUESTS})"
+            exit 1
+          fi
+          
+          if [ "${FAILED_REQUESTS}" != "0" ]; then
+            echo "❌ Test had failures: ${FAILED_REQUESTS}"
+            exit 1
+          fi
+          
+          echo "✅ Basic test validation passed!"
+          echo "✅ ${TOTAL_REQUESTS} operations completed with no failures"
 
-          echo "✅ Test validation passed!"
-          echo "✅ ${TOTAL_OPS} operations completed with 100% success rate"
-
-      - name: Upload test report
+      - name: Upload Locust report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-report
+          name: locust-report-basic
           path: /tmp/chopsticks/
           retention-days: 30
 
       - name: Cleanup
         if: always()
         run: |
+          sudo microceph disable rgw || true
+          sudo snap remove microceph || true
+
+  s3-large-objects-with-metrics:
+    name: S3 Large Objects Test (With Metrics & Prometheus)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y snapd jq curl
+
+      - name: Install MicroCeph
+        run: |
+          sudo snap install microceph --channel=latest/stable
+          sudo microceph cluster bootstrap
+          
+          # Create loop devices for OSDs
+          for i in 1 2 3; do
+            sudo truncate -s 10G /tmp/osd${i}.img
+            LOOP_DEV=$(sudo losetup -f --show /tmp/osd${i}.img)
+            sudo microceph disk add ${LOOP_DEV} --wipe
+          done
+          
+          # Enable RGW
+          sudo microceph enable rgw
+          sleep 10
+          sudo microceph status
+
+      - name: Create S3 user and configure
+        run: |
+          # Create S3 user
+          sudo radosgw-admin user create \
+            --uid=chopsticks-ci \
+            --display-name="Chopsticks CI" \
+            --email=ci@chopsticks.io > /tmp/s3_user.json
+          
+          ACCESS_KEY=$(cat /tmp/s3_user.json | jq -r ".keys[0].access_key")
+          SECRET_KEY=$(cat /tmp/s3_user.json | jq -r ".keys[0].secret_key")
+          
+          echo "ACCESS_KEY=${ACCESS_KEY}" >> $GITHUB_ENV
+          echo "SECRET_KEY=${SECRET_KEY}" >> $GITHUB_ENV
+          
+          # Create S3 config WITH metrics enabled and persistent mode
+          mkdir -p config
+          cat > config/s3_config.yaml <<EOF
+          endpoint: http://127.0.0.1:80
+          access_key: ${ACCESS_KEY}
+          secret_key: ${SECRET_KEY}
+          bucket: chopsticks-ci-test
+          region: default
+          driver: s5cmd
+          driver_config:
+            s5cmd_path: /usr/local/bin/s5cmd
+          
+          # Enable metrics collection with persistent server
+          metrics:
+            enabled: true
+            http_host: 0.0.0.0
+            http_port: 8090
+            aggregation_window_seconds: 10
+            export_dir: /tmp/chopsticks_metrics
+            test_name: "CI Functional Test with Metrics"
+            
+            # Enable persistent metrics server
+            persistent:
+              enabled: true
+              pid_file: /tmp/chopsticks_metrics.pid
+              state_file: /tmp/chopsticks_metrics_state.json
+          EOF
+          
+          # Create scenario config for CI test
+          cat > config/ci_scenario_config.yaml <<EOF
+          s3_large_objects:
+            object_size_mb: 1
+            max_keys_in_memory: 5
+          EOF
+
+      - name: Install s5cmd
+        run: |
+          curl -L -o /tmp/s5cmd.tar.gz \
+            https://github.com/peak/s5cmd/releases/download/v2.2.2/s5cmd_2.2.2_Linux-64bit.tar.gz
+          sudo tar -xzf /tmp/s5cmd.tar.gz -C /usr/local/bin s5cmd
+          sudo chmod +x /usr/local/bin/s5cmd
+          s5cmd version
+
+      - name: Create S3 bucket
+        env:
+          S3_ENDPOINT_URL: http://127.0.0.1:80
+          AWS_ACCESS_KEY_ID: ${{ env.ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.SECRET_KEY }}
+          AWS_REGION: default
+        run: |
+          s5cmd mb s3://chopsticks-ci-test
+
+      - name: Start persistent metrics server
+        run: |
+          # Start the persistent metrics endpoint
+          uv run chopsticks metrics start --config config/s3_config.yaml
+          
+          # Verify it started
+          sleep 2
+          uv run chopsticks metrics status --config config/s3_config.yaml
+          
+          # Test endpoint is accessible
+          curl -s http://localhost:8090/metrics | head -5
+
+      - name: Start Prometheus scraper in background
+        run: |
+          # Create Prometheus config
+          cat > /tmp/prometheus.yml <<EOF
+          global:
+            scrape_interval: 5s
+            evaluation_interval: 5s
+          
+          scrape_configs:
+            - job_name: 'chopsticks'
+              static_configs:
+                - targets: ['localhost:8090']
+          EOF
+          
+          # Download and run Prometheus
+          cd /tmp
+          curl -LO https://github.com/prometheus/prometheus/releases/download/v2.48.0/prometheus-2.48.0.linux-amd64.tar.gz
+          tar -xzf prometheus-2.48.0.linux-amd64.tar.gz
+          cd prometheus-2.48.0.linux-amd64
+          
+          # Start Prometheus in background
+          ./prometheus --config.file=/tmp/prometheus.yml \
+            --storage.tsdb.path=/tmp/prometheus-data \
+            --web.listen-address=:9090 > /tmp/prometheus.log 2>&1 &
+          
+          echo $! > /tmp/prometheus.pid
+          
+          # Wait for Prometheus to start
+          sleep 5
+          
+          # Verify Prometheus is running
+          curl -s http://localhost:9090/-/healthy && echo "Prometheus is healthy"
+
+      - name: Run S3 Large Object Test with Metrics (2 minutes)
+        run: |
+          uv run chopsticks run \
+            --workload-config config/s3_config.yaml \
+            --scenario-config config/ci_scenario_config.yaml \
+            -f src/chopsticks/scenarios/s3_large_objects.py \
+            --headless \
+            --users 3 \
+            --spawn-rate 1 \
+            --duration 2m
+
+      - name: Validate Prometheus scraped metrics
+        run: |
+          echo "Waiting for final scrape..."
+          sleep 10
+          
+          # Query Prometheus for metrics
+          echo "Querying Prometheus for chopsticks metrics..."
+          METRICS=$(curl -s 'http://localhost:9090/api/v1/query?query=chopsticks_operation_total')
+          
+          echo "Prometheus response:"
+          echo "$METRICS" | jq '.'
+          
+          # Check if we got any metrics
+          RESULT_COUNT=$(echo "$METRICS" | jq '.data.result | length')
+          
+          if [ "$RESULT_COUNT" -eq "0" ]; then
+            echo "❌ No metrics found in Prometheus!"
+            echo "Checking if metrics endpoint was accessible..."
+            curl -s http://localhost:8090/metrics | head -20 || echo "Metrics endpoint not accessible"
+            exit 1
+          fi
+          
+          echo "✅ Prometheus successfully scraped $RESULT_COUNT metric series"
+          
+          # Show sample metrics
+          echo "Sample metrics from Prometheus:"
+          echo "$METRICS" | jq '.data.result[0]'
+
+      - name: Validate exported metrics files
+        run: |
+          # Find the most recent run directory (metrics export to /tmp/chopsticks_metrics/* as per config)
+          RUN_DIR=$(ls -td /tmp/chopsticks_metrics/*/ 2>/dev/null | head -1)
+          
+          if [ -z "${RUN_DIR}" ]; then
+            echo "❌ Run directory not found!"
+            echo "Current directory contents:"
+            ls -lah .
+            exit 1
+          fi
+          
+          echo "Run Directory: ${RUN_DIR}"
+          echo "Contents:"
+          ls -lah ${RUN_DIR}
+          
+          # Check for all expected files
+          METRICS_FILE="${RUN_DIR}/metrics.json"
+          CSV_FILE="${RUN_DIR}/metrics.csv"
+          JSONL_FILE="${RUN_DIR}/metrics.jsonl"
+          
+          if [ ! -f "${METRICS_FILE}" ]; then
+            echo "❌ Metrics JSON file not found!"
+            exit 1
+          fi
+          
+          if [ ! -f "${CSV_FILE}" ]; then
+            echo "❌ Metrics CSV file not found!"
+            exit 1
+          fi
+          
+          if [ ! -f "${JSONL_FILE}" ]; then
+            echo "❌ Metrics JSONL file not found!"
+            exit 1
+          fi
+          
+          echo "✅ All metrics files present"
+          
+          # Check metrics content
+          SUCCESS_RATE=$(cat ${METRICS_FILE} | jq -r '.summary.operations.success_rate')
+          TOTAL_OPS=$(cat ${METRICS_FILE} | jq -r '.summary.operations.total')
+          
+          echo "Total Operations: ${TOTAL_OPS}"
+          echo "Success Rate: ${SUCCESS_RATE}%"
+          
+          if [ "${SUCCESS_RATE}" != "100" ]; then
+            echo "❌ Success rate is not 100%!"
+            exit 1
+          fi
+          
+          if [ "${TOTAL_OPS}" -lt "10" ]; then
+            echo "❌ Too few operations completed (${TOTAL_OPS})"
+            exit 1
+          fi
+          
+          echo "✅ Metrics validation passed!"
+          echo "✅ ${TOTAL_OPS} operations completed with 100% success rate"
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-with-metrics
+          path: |
+            /tmp/chopsticks/
+            /tmp/chopsticks_metrics/
+            /tmp/prometheus.log
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        run: |
+          # Stop persistent metrics server
+          uv run chopsticks metrics stop --config config/s3_config.yaml || true
+          
+          # Stop Prometheus
+          if [ -f /tmp/prometheus.pid ]; then
+            kill $(cat /tmp/prometheus.pid) || true
+          fi
+          
           sudo microceph disable rgw || true
           sudo snap remove microceph || true

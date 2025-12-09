@@ -280,16 +280,16 @@ class TestEndToEndErrorHandling:
                     failed_count += 1
 
             # Verify 100% failure rate
-            assert failed_count == total_operations, (
-                f"Expected 100% failure rate, got {failed_count}/{total_operations}"
-            )
+            assert (
+                failed_count == total_operations
+            ), f"Expected 100% failure rate, got {failed_count}/{total_operations}"
 
             # Verify all events have exceptions
             assert len(fired_events) == total_operations
             for event in fired_events:
-                assert event["exception"] is not None, (
-                    "All failed operations should have exceptions"
-                )
+                assert (
+                    event["exception"] is not None
+                ), "All failed operations should have exceptions"
 
     @pytest.mark.timeout(10)
     def test_mixed_operations_all_fail_with_bad_config(self):

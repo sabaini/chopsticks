@@ -39,6 +39,7 @@ def test_locust_reports_failures_with_bad_config():
             "uv",
             "run",
             "chopsticks",
+            "run",
             "--workload-config",
             config_path,
             "-f",
