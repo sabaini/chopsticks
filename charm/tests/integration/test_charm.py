@@ -14,12 +14,6 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
-S5CMD_VERSION = "2.2.2"
-S5CMD_URL = (
-    f"https://github.com/peak/s5cmd/releases/download/v{S5CMD_VERSION}/"
-    f"s5cmd_{S5CMD_VERSION}_Linux-64bit.tar.gz"
-)
-
 # Minimal test parameters for fast integration tests
 MIN_USERS = 1
 MIN_SPAWN_RATE = 0.5
@@ -90,22 +84,6 @@ def _get_leader_unit(juju: jubilant.Juju, app: str = "chopsticks") -> str:
         if unit.leader:
             return unit_name
     raise RuntimeError(f"No leader found for {app}")
-
-
-def _install_s5cmd(juju: jubilant.Juju, unit: str) -> None:
-    """Install s5cmd on a unit (workaround for install script issue)."""
-    juju.ssh(
-        unit,
-        f"curl -sL {S5CMD_URL} | sudo tar -xzf - -C /usr/local/bin s5cmd",
-    )
-
-
-def _install_s5cmd_all_units(juju: jubilant.Juju, app: str = "chopsticks") -> None:
-    """Install s5cmd on all units of an application."""
-    status = juju.status()
-    for unit_name in status.apps[app].units:
-        logger.info("Installing s5cmd on %s...", unit_name)
-        _install_s5cmd(juju, unit_name)
 
 
 class TestBasicDeployment:
@@ -200,8 +178,6 @@ class TestStartTest:
         """Verify distributed test execution starts correctly."""
         self._ensure_deployed_and_configured(charm, juju, microceph_s3)
 
-        _install_s5cmd_all_units(juju)
-
         logger.info("Starting test...")
         leader = _get_leader_unit(juju)
         result = juju.run(
@@ -292,8 +268,6 @@ class TestStopTest:
         )
         juju.wait(jubilant.all_active, timeout=300)
 
-        _install_s5cmd_all_units(juju)
-
         leader = _get_leader_unit(juju)
         status_result = juju.run(leader, "test-status")
         if status_result.results["test-state"] != "running":
@@ -319,8 +293,6 @@ class TestFetchMetrics:
     ) -> None:
         """Verify metrics are collected and retrievable."""
         self._ensure_deployed_and_configured(charm, juju, microceph_s3)
-
-        _install_s5cmd_all_units(juju)
 
         logger.info("Running a short test...")
         leader = _get_leader_unit(juju)
@@ -388,8 +360,6 @@ class TestDynamicScaling:
         logger.info("Waiting for new units to be ready...")
         juju.wait(jubilant.all_active, timeout=600)
 
-        _install_s5cmd_all_units(juju)
-
         logger.info("Verifying worker count increased...")
         new_result = juju.run(leader, "test-status")
         new_count = int(new_result.results["worker-count"])
@@ -442,8 +412,6 @@ class TestPreventDuplicateTests:
     ) -> None:
         """Verify only one test can run at a time."""
         self._ensure_deployed_and_configured(charm, juju, microceph_s3)
-
-        _install_s5cmd_all_units(juju)
 
         logger.info("Starting first test...")
         leader = _get_leader_unit(juju)
