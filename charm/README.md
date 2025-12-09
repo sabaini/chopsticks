@@ -39,14 +39,19 @@ juju run chopsticks/leader fetch-metrics
 Start a distributed stress test.
 
 ```bash
-juju run chopsticks/leader start-test users=100 spawn-rate=10 duration=30m
+juju run chopsticks/leader start-test users=10 spawn-rate=2.5 duration=30m
 ```
 
+Tests will run asynchronously for the specified duration. Query current status with the `test-status` action, cf. below. 
+
+The output of this action will summarize the parameters for the test, and where on the leader metrics are collected. Also cf. the `fetch-metrics` action below.
+
+
 Parameters:
-- `users`: Override user count
-- `spawn-rate`: Override spawn rate
-- `duration`: Override test duration
-- `scenario-file`: Override scenario
+- `users`: Simulated user count at start of test
+- `spawn-rate`: Rate of additional users spawned per second (float)
+- `duration`: Test run time, e.g. 300s, 1h30m
+- `scenario-file`: Scenario file to use. This is a path relative to the chopsticks repo.
 - `headless`: Run without web UI (default: true)
 
 ### stop-test
@@ -87,12 +92,6 @@ juju run chopsticks/leader fetch-metrics format=summary
 - `chopsticks-leader.service` - Headless leader
 - `chopsticks-leader-webui.service` - Leader with web UI
 - `chopsticks-worker.service` - Worker process
-
-Check logs:
-```bash
-juju ssh chopsticks/0 -- journalctl -u chopsticks-leader -f
-juju ssh chopsticks/1 -- journalctl -u chopsticks-worker -f
-```
 
 
 ## Security Considerations
