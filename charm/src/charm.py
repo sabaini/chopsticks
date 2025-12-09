@@ -142,6 +142,18 @@ class ChopsticksCharm(ops.CharmBase):
     def _on_update_status(self, event: ops.UpdateStatusEvent) -> None:
         """Periodically refresh status (e.g., if services crash)."""
         logger.debug("_on_update_status: refreshing status")
+
+        if self.unit.is_leader():
+            test_state = self._get_peer_data("test_state", "idle")
+            if test_state == "running":
+                master_running = self._is_service_running(MASTER_SERVICE)
+                if not master_running:
+                    logger.warning(
+                        "_on_update_status: test_state is 'running' but master service "
+                        "is not running; marking test as failed"
+                    )
+                    self._set_peer_data("test_state", "failed")
+
         self._set_ready_status()
 
     def _on_stop(self, event: ops.StopEvent) -> None:
@@ -441,8 +453,7 @@ class ChopsticksCharm(ops.CharmBase):
                 tar.add(f, arcname=f.name)
         logger.debug("_on_fetch_metrics_action: created archive %s", archive_path)
 
-        app_name = self.app.name
-        scp_command = f"juju scp {app_name}/{self.unit.name.split('/')[1]}:{archive_path} ."
+        scp_command = f"juju scp {self.unit.name}:{archive_path} ."
 
         result = {
             "test-run-id": test_run_id,
@@ -630,6 +641,10 @@ class ChopsticksCharm(ops.CharmBase):
         logger.debug("_maybe_start_worker: checking if we should start worker")
         if self.unit.is_leader():
             logger.debug("_maybe_start_worker: skipping - this is the leader")
+            return
+
+        if self._is_service_running(WORKER_SERVICE):
+            logger.debug("_maybe_start_worker: worker already running, skipping")
             return
 
         if not self._is_config_valid():
