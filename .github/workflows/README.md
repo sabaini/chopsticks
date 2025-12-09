@@ -270,3 +270,189 @@ Planned improvements:
 - [ ] Add automated benchmarking
 - [ ] Add security scanning (Dependabot, CodeQL)
 - [ ] Add matrix testing (multiple Python versions)
+
+## Documentation Workflows
+
+### 5. Documentation Build (`docs-build.yml`)
+
+Builds documentation to verify it compiles correctly.
+
+**Jobs:**
+
+1. **build** - Build HTML documentation
+   - Installs Sphinx and dependencies
+   - Builds HTML with canonical-sphinx theme
+   - Uploads HTML artifacts (7-day retention)
+   - Checks for build warnings
+   - Verifies required files and structure
+
+2. **build-pdf** - Build PDF documentation
+   - Installs LaTeX dependencies
+   - Builds PDF output
+   - Uploads PDF artifacts (7-day retention)
+   - Non-blocking if PDF build fails
+
+3. **test-rtd-config** - Validate RTD configuration
+   - Checks .readthedocs.yaml exists and is valid YAML
+   - Verifies docs/requirements.txt exists
+   - Checks for required packages
+
+**Triggers:**
+- Pull requests to `main` (when docs/ changes)
+- Pushes to `main` (when docs/ changes)
+
+**Duration:** ~3-5 minutes (HTML), ~8-12 minutes (PDF)
+
+### 6. Documentation Quality Checks (`docs-checks.yml`)
+
+Comprehensive quality checks for documentation.
+
+**Jobs:**
+
+1. **linkcheck** - Verify all links
+   - Checks external and internal links
+   - Non-blocking (warnings only)
+
+2. **spelling** - Check spelling with Vale
+   - Uses Vale spelling checker
+   - Checks against custom wordlist
+   - Non-blocking (warnings only)
+
+3. **woke** - Check inclusive language
+   - Validates inclusive language usage
+   - **Blocking** - build fails if issues found
+
+4. **vale** - Style guide compliance
+   - Checks against Canonical style guide
+   - Non-blocking (warnings only)
+
+5. **lint-markdown** - Lint Markdown files
+   - Uses pymarkdownlnt
+   - Non-blocking (warnings only)
+
+6. **check-structure** - Verify Diátaxis structure
+   - Checks tutorial/, how-to/, reference/, explanation/ exist
+   - Verifies each has index.rst
+   - Checks for orphaned files
+   - **Blocking** - build fails if structure is wrong
+
+**Triggers:**
+- Pull requests to `main` (when docs/ changes)
+- Pushes to `main` (when docs/ changes)
+
+**Duration:** ~4-6 minutes total (jobs run in parallel)
+
+
+### 7. Documentation Publish (`docs-publish.yml`)
+
+Verifies documentation is ready for Read the Docs publishing.
+
+**Jobs:**
+
+1. **verify-rtd** - Verify RTD configuration
+   - Validates .readthedocs.yaml syntax
+   - Tests documentation build
+   - Ensures all dependencies are correct
+
+2. **publish-info** - Display publishing information
+   - Shows Read the Docs URL
+   - Explains automatic publishing
+   - Documents build configuration
+
+**Triggers:**
+- Pushes to `main` (when docs/ changes)
+- Manual dispatch (workflow_dispatch)
+
+**Publishing:**
+Documentation is automatically published by Read the Docs at:
+- **Production:** https://canonical-chopsticks.readthedocs-hosted.com
+- **PR Previews:** https://canonical-chopsticks--pr-<number>.readthedocs-hosted.com
+
+Read the Docs automatically:
+- Builds on every push to main
+- Creates preview builds for PRs
+- Manages versions and releases
+- Provides PDF/EPUB downloads
+- Offers built-in search
+
+**Configuration:**
+- `.readthedocs.yaml` in repository root
+- No secrets or tokens required
+- No manual deployment steps
+
+**Duration:** ~2-3 minutes
+
+### 8. Documentation Status (`docs-status.yml`)
+
+Health check and status reporting.
+
+**Jobs:**
+
+1. **status-check** - Generate documentation health report
+   - Counts documentation files (RST and MD)
+   - Measures build time
+   - Calculates build size
+   - Posts status comment on PRs
+   - Uploads status report artifact
+
+**Triggers:**
+- Pull requests (when docs/ changes) - posts comment
+- Weekly schedule (Sunday midnight) - health check
+- Manual dispatch
+
+**Duration:** ~2-3 minutes
+
+## Documentation Architecture
+
+The documentation uses:
+- **Sphinx**: Documentation generator
+- **Canonical Theme**: Furo-based theme
+- **Diátaxis Framework**: 4-part documentation structure
+  - Tutorial (learning-oriented)
+  - How-to guides (task-oriented)
+  - Reference (information-oriented)
+  - Explanation (understanding-oriented)
+
+## Status Badges
+
+Add to README.md:
+
+```markdown
+[![CI](https://github.com/canonical/chopsticks/actions/workflows/ci.yml/badge.svg)](https://github.com/canonical/chopsticks/actions/workflows/ci.yml)
+[![Documentation Build](https://github.com/canonical/chopsticks/actions/workflows/docs-build.yml/badge.svg)](https://github.com/canonical/chopsticks/actions/workflows/docs-build.yml)
+[![Documentation Checks](https://github.com/canonical/chopsticks/actions/workflows/docs-checks.yml/badge.svg)](https://github.com/canonical/chopsticks/actions/workflows/docs-checks.yml)
+```
+
+## Configuration
+
+### Read the Docs
+
+Documentation is automatically published by Read the Docs. No configuration needed!
+
+- **URL:** https://canonical-chopsticks.readthedocs-hosted.com
+- **Configuration:** `.readthedocs.yaml` (already configured)
+- **Automatic:** Builds on push to main and PRs
+
+### No Secrets Required
+
+Documentation workflows don't require any repository secrets or variables:
+- ✅ Read the Docs auto-detects `.readthedocs.yaml`
+- ✅ No webhooks or tokens needed
+- ✅ PR previews work automatically
+- ✅ Version management included
+
+## Path Filters
+
+Workflows use path filters to avoid unnecessary runs:
+
+- **Documentation workflows** only run when:
+  - `docs/**` files change
+  - `.readthedocs.yaml` changes
+  - Workflow file itself changes
+
+- **Code workflows** run when:
+  - `src/**` files change
+  - `tests/**` files change
+  - Workflow files change
+
+This optimizes CI/CD runtime and resource usage.

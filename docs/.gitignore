@@ -1,0 +1,9 @@
+# Sphinx build outputs
+_build/
+.sphinx/*
+!.sphinx/get_vale_conf.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class

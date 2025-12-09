@@ -463,11 +463,17 @@ See [`.github/workflows/README.md`](.github/workflows/README.md) for details.
 
 ## Documentation
 
-- [DESIGN.md](DESIGN.md) - Architecture and design details
-- [METRICS_DESIGN.md](METRICS_DESIGN.md) - Comprehensive metrics specification
-- [QUICKSTART.md](QUICKSTART.md) - Quick start guide
-- [FRAMEWORK_SUMMARY.md](FRAMEWORK_SUMMARY.md) - Complete framework overview
-- [TEST_RUN_SUMMARY.md](TEST_RUN_SUMMARY.md) - Live test results
+📚 **Full documentation**: https://canonical-chopsticks.readthedocs-hosted.com
+
+The documentation follows the [Diátaxis framework](https://diataxis.fr/) with four content types:
+
+- **[Tutorial](https://canonical-chopsticks.readthedocs-hosted.com/en/latest/tutorial/)** - Learning-oriented guides for getting started
+- **[How-to Guides](https://canonical-chopsticks.readthedocs-hosted.com/en/latest/how-to/)** - Task-oriented instructions for specific goals
+- **[Reference](https://canonical-chopsticks.readthedocs-hosted.com/en/latest/reference/)** - Information-oriented technical specifications
+- **[Explanation](https://canonical-chopsticks.readthedocs-hosted.com/en/latest/explanation/)** - Understanding-oriented conceptual discussions
+
+Additional documentation:
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Contributing guidelines
 - [.github/workflows/README.md](.github/workflows/README.md) - CI/CD workflows
 
 ## Contributing
@@ -482,8 +488,12 @@ See [`.github/workflows/README.md`](.github/workflows/README.md) for details.
 
 ## License
 
-MIT
+This project is licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later).
+
+See the [LICENSE](LICENSE) file for the full license text.
 
 ## Author
 
 Utkarsh Bhatt <utkarsh.bhatt@canonical.com>
+
+Copyright (C) 2024 Canonical Ltd.

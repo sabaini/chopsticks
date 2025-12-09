@@ -3,6 +3,7 @@ name = "chopsticks"
 version = "0.1.0"
 description = "Ceph stress testing framework using Locust"
 readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
 authors = [
     {name = "Utkarsh Bhatt", email = "utkarsh.bhatt@canonical.com"}
 ]

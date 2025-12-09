@@ -1,0 +1,92 @@
+name: Publish Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.readthedocs.yaml'
+      - '.github/workflows/docs-publish.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  verify-rtd:
+    name: Verify Read the Docs Configuration
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Validate .readthedocs.yaml
+        run: |
+          if [ ! -f .readthedocs.yaml ]; then
+            echo "::error::Missing .readthedocs.yaml configuration file"
+            exit 1
+          fi
+          
+          python3 -c "import yaml; yaml.safe_load(open('.readthedocs.yaml'))"
+          echo "✅ RTD configuration is valid"
+      
+      - name: Check documentation builds
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Test build
+        run: |
+          sudo apt-get update && sudo apt-get install -y python3-venv
+          cd docs && make install && make html
+          echo "✅ Documentation builds successfully"
+  
+  publish-info:
+    name: Documentation Publishing Info
+    runs-on: ubuntu-22.04
+    needs: verify-rtd
+    
+    steps:
+      - name: Output publishing info
+        run: |
+          cat << 'EOF'
+          
+          ╔══════════════════════════════════════════════════════════════════════════════╗
+          ║                     📖 DOCUMENTATION PUBLISHING                              ║
+          ╚══════════════════════════════════════════════════════════════════════════════╝
+          
+          Documentation is published via Read the Docs at:
+          
+            🌐 https://canonical-chopsticks.readthedocs-hosted.com
+          
+          Read the Docs automatically builds documentation when:
+            ✓ Changes are pushed to main branch
+            ✓ Changes affect docs/ directory or .readthedocs.yaml
+            ✓ Pull requests are created (preview builds)
+          
+          Configuration:
+            • Build config: .readthedocs.yaml
+            • Python version: 3.12
+            • Builder: Sphinx (dirhtml)
+            • Theme: Canonical Sphinx (Furo-based)
+            
+          Build status:
+            • Check: https://readthedocs.org/projects/canonical-chopsticks/builds/
+            
+          Documentation structure (Diátaxis):
+            📘 Tutorial      - Learning-oriented guides
+            📗 How-to        - Task-oriented guides
+            📙 Reference     - Information-oriented specs
+            📕 Explanation   - Understanding-oriented concepts
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          Note: Read the Docs provides:
+            ✓ Automatic builds on push
+            ✓ PR preview builds
+            ✓ Version management
+            ✓ Search functionality
+            ✓ PDF/EPUB downloads
+            ✓ Canonical subdomain (canonical-chopsticks.readthedocs-hosted.com)
+          
+          EOF
+          
+          echo "::notice::Documentation will be available at https://canonical-chopsticks.readthedocs-hosted.com"

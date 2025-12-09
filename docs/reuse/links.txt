@@ -1,0 +1,9 @@
+.. _GitHub repository: https://github.com/canonical/chopsticks
+.. _Locust: https://locust.io/
+.. _Ceph: https://ceph.io/
+.. _uv: https://astral.sh/uv/
+.. _s5cmd: https://github.com/peak/s5cmd
+.. _boto3: https://boto3.amazonaws.com/v1/documentation/api/latest/index.html
+.. _Prometheus: https://prometheus.io/
+.. _Grafana: https://grafana.com/
+.. _MicroCeph: https://snapcraft.io/microceph

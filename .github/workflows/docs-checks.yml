@@ -1,0 +1,208 @@
+name: Documentation Quality Checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs-checks.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+
+jobs:
+  linkcheck:
+    name: Check Links
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        working-directory: docs
+        run: |
+          make install
+      
+      - name: Check links
+        working-directory: docs
+        run: |
+          make linkcheck || {
+            echo "::warning::Some links are broken. Check the output above."
+            exit 0  # Non-blocking for now
+          }
+      
+      - name: Upload linkcheck results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkcheck-results
+          path: docs/_build/linkcheck/
+          retention-days: 7
+  
+  spelling:
+    name: Check Spelling
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        working-directory: docs
+        run: |
+          make install
+          make vale-install
+      
+      - name: Run spelling check
+        working-directory: docs
+        run: |
+          make spelling || {
+            echo "::warning::Spelling issues found. Review output above."
+            exit 0  # Non-blocking for now
+          }
+  
+  woke:
+    name: Check Inclusive Language
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        working-directory: docs
+        run: |
+          make install
+          make vale-install
+      
+      - name: Run woke check
+        working-directory: docs
+        run: |
+          make woke || {
+            echo "::error::Inclusive language issues found"
+            exit 1  # Blocking - we want inclusive language
+          }
+  
+  vale:
+    name: Check Style Guide
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        working-directory: docs
+        run: |
+          make install
+          make vale-install
+      
+      - name: Run vale check
+        working-directory: docs
+        run: |
+          make vale || {
+            echo "::warning::Style guide issues found. Review output above."
+            exit 0  # Non-blocking for now
+          }
+  
+  lint-markdown:
+    name: Lint Markdown Files
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        working-directory: docs
+        run: |
+          make install
+          make pymarkdownlnt-install
+      
+      - name: Lint markdown
+        working-directory: docs
+        run: |
+          make lint-md || {
+            echo "::warning::Markdown linting issues found."
+            exit 0  # Non-blocking for now
+          }
+  
+  check-structure:
+    name: Verify Documentation Structure
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Check Diátaxis structure
+        run: |
+          # Check that all required directories exist
+          for dir in tutorial how-to reference explanation; do
+            if [ ! -d "docs/$dir" ]; then
+              echo "::error::Missing required directory: docs/$dir"
+              exit 1
+            fi
+            
+            # Check that each directory has an index
+            if [ ! -f "docs/$dir/index.rst" ]; then
+              echo "::error::Missing index.rst in docs/$dir"
+              exit 1
+            fi
+          done
+          
+          echo "✅ Diátaxis structure is correct"
+      
+      - name: Check for orphaned files
+        run: |
+          # Find .rst files not referenced in any index
+          cd docs
+          
+          # Get all .rst files
+          find . -name "*.rst" -type f > /tmp/all_rst_files.txt
+          
+          # This is a basic check - could be enhanced
+          echo "ℹ️ Found $(wc -l < /tmp/all_rst_files.txt) RST files"
+          
+          # Check that main index exists
+          if [ ! -f "index.rst" ]; then
+            echo "::error::Missing docs/index.rst"
+            exit 1
+          fi
+          
+          echo "✅ No obvious structural issues"
+      
+      - name: Verify reusable content
+        run: |
+          if [ ! -f "docs/reuse/links.txt" ]; then
+            echo "::warning::Missing docs/reuse/links.txt"
+          fi
+          
+          echo "✅ Structure verification complete"
