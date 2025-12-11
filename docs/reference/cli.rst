@@ -46,9 +46,30 @@ Run load tests with Locust.
 
    Test duration (e.g., ``5m``, ``1h``, ``30s``). Headless mode only.
 
-.. option:: --host URL
+**Distributed mode options:**
 
-   Override host URL from configuration.
+.. option:: --leader
+
+   Run as leader node in distributed mode. The leader coordinates workers,
+   aggregates metrics, and hosts the web UI.
+
+.. option:: --worker
+
+   Run as worker node in distributed mode. Workers execute test scenarios
+   and report metrics to the leader.
+
+.. option:: --leader-host HOST
+
+   Host/IP of the leader node for workers to connect to. Default: ``127.0.0.1``
+
+.. option:: --expect-workers INTEGER
+
+   Number of workers to wait for before starting the test (leader only).
+
+.. option:: --expect-workers-max-wait SECONDS
+
+   Maximum time in seconds to wait for workers to connect (leader only).
+   Default: ``0`` (wait forever)
 
 **Examples:**
 
@@ -78,6 +99,26 @@ Run with custom scenario config:
      --scenario-config config/my_scenario.yaml \
      -f src/chopsticks/scenarios/s3_large_objects.py \
      --headless --users 10 --spawn-rate 2 --duration 5m
+
+Run as distributed leader (headless):
+
+.. code-block:: bash
+
+   chopsticks run \
+     --workload-config config/s3_config.yaml \
+     -f src/chopsticks/scenarios/s3_large_objects.py \
+     --leader --headless \
+     --users 1000 --spawn-rate 50 --duration 10m \
+     --expect-workers 5 --expect-workers-max-wait 60
+
+Run as distributed worker:
+
+.. code-block:: bash
+
+   chopsticks run \
+     --workload-config config/s3_config.yaml \
+     -f src/chopsticks/scenarios/s3_large_objects.py \
+     --worker --leader-host 10.0.0.1 --headless
 
 chopsticks metrics
 ------------------

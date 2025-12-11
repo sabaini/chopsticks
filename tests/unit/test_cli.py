@@ -218,6 +218,60 @@ class TestValidateArguments:
 
         validate_arguments(args)
 
+    def test_leader_and_worker_mutually_exclusive(self):
+        """Test error when both --leader and --worker are specified."""
+        args = parse_args(
+            [
+                "--workload-config",
+                "s3.yaml",
+                "-f",
+                "scenario.py",
+                "--leader",
+                "--worker",
+            ]
+        )
+
+        with pytest.raises(ValueError, match="Cannot specify both --leader and --worker"):
+            validate_arguments(args)
+
+    def test_worker_headless_without_users(self):
+        """Test worker in headless mode doesn't require users/spawn-rate."""
+        args = parse_args(
+            [
+                "--workload-config",
+                "s3.yaml",
+                "-f",
+                "scenario.py",
+                "--worker",
+                "--headless",
+                "--leader-host",
+                "10.0.0.1",
+            ]
+        )
+
+        validate_arguments(args)
+
+    def test_expect_workers_requires_leader(self):
+        """Test --expect-workers only works with --leader."""
+        args = parse_args(
+            [
+                "--workload-config",
+                "s3.yaml",
+                "-f",
+                "scenario.py",
+                "--headless",
+                "--users",
+                "10",
+                "--spawn-rate",
+                "2",
+                "--expect-workers",
+                "3",
+            ]
+        )
+
+        with pytest.raises(ValueError, match="--expect-workers can only be used with --leader"):
+            validate_arguments(args)
+
 
 class TestBuildLocustCommand:
     """Test Locust command building."""
@@ -290,6 +344,59 @@ class TestBuildLocustCommand:
         assert "-r" in cmd and "1" in cmd
         assert "-t" not in cmd
         assert run_dir.startswith("/tmp/chopsticks/")
+
+    def test_leader_mode_command(self):
+        """Test command for leader mode."""
+        args = parse_args(
+            [
+                "--workload-config",
+                "s3.yaml",
+                "-f",
+                "scenario.py",
+                "--leader",
+                "--headless",
+                "--users",
+                "100",
+                "--spawn-rate",
+                "10",
+                "--expect-workers",
+                "3",
+            ]
+        )
+
+        cmd, run_dir = build_locust_command(args)
+
+        assert "--master" in cmd
+        assert "--expect-workers" in cmd
+        assert "3" in cmd
+        assert "--headless" in cmd
+        assert "-u" in cmd and "100" in cmd
+        assert "-r" in cmd and "10" in cmd
+
+    def test_worker_mode_command(self):
+        """Test command for worker mode."""
+        args = parse_args(
+            [
+                "--workload-config",
+                "s3.yaml",
+                "-f",
+                "scenario.py",
+                "--worker",
+                "--leader-host",
+                "10.0.0.1",
+                "--headless",
+            ]
+        )
+
+        cmd, run_dir = build_locust_command(args)
+
+        assert "--worker" in cmd
+        assert "--master-host" in cmd
+        assert "10.0.0.1" in cmd
+        assert "--headless" in cmd
+        assert "-u" not in cmd
+        assert "-r" not in cmd
+        assert run_dir == ""
 
 
 class TestSetEnvironmentVariables:

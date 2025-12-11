@@ -78,6 +78,38 @@ def create_parser() -> argparse.ArgumentParser:
         help="Test duration (e.g., 300s, 20m, 3h, 1h30m).",
     )
 
+    # Distributed mode arguments
+    run_parser.add_argument(
+        "--leader",
+        action="store_true",
+        help="Run as leader node in distributed mode.",
+    )
+
+    run_parser.add_argument(
+        "--worker",
+        action="store_true",
+        help="Run as worker node in distributed mode.",
+    )
+
+    run_parser.add_argument(
+        "--leader-host",
+        type=str,
+        default="127.0.0.1",
+        help="Host/IP of the leader node (for workers). Default: 127.0.0.1",
+    )
+
+    run_parser.add_argument(
+        "--expect-workers",
+        type=int,
+        help="Number of workers to wait for before starting test (leader only).",
+    )
+
+    run_parser.add_argument(
+        "--expect-workers-max-wait",
+        type=int,
+        help="Max time in seconds to wait for workers to connect (leader only). Default: 0 (wait forever).",
+    )
+
     # 'metrics' command group
     metrics_parser = subparsers.add_parser(
         "metrics", help="Manage persistent metrics server"

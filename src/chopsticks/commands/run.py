@@ -44,11 +44,21 @@ def validate_config_paths(args) -> None:
 
 def validate_arguments(args) -> None:
     """Validate argument combinations."""
-    if args.headless:
+    leader = getattr(args, "leader", False)
+    worker = getattr(args, "worker", False)
+    expect_workers = getattr(args, "expect_workers", None)
+
+    if leader and worker:
+        raise ValueError("Cannot specify both --leader and --worker")
+
+    if args.headless and not worker:
         if args.users is None:
-            raise ValueError("--users is required in headless mode")
+            raise ValueError("--users is required in headless mode (unless --worker)")
         if args.spawn_rate is None:
-            raise ValueError("--spawn-rate is required in headless mode")
+            raise ValueError("--spawn-rate is required in headless mode (unless --worker)")
+
+    if expect_workers and not leader:
+        raise ValueError("--expect-workers can only be used with --leader")
 
 
 def build_locust_command(args) -> tuple[List[str], str]:
@@ -59,24 +69,46 @@ def build_locust_command(args) -> tuple[List[str], str]:
     cmd = ["locust", "-f", args.locustfile]
     run_dir = ""
 
+    leader = getattr(args, "leader", False)
+    worker = getattr(args, "worker", False)
+
+    # Distributed mode: leader (locust calls this "master")
+    if leader:
+        cmd.append("--master")
+        expect_workers = getattr(args, "expect_workers", None)
+        if expect_workers:
+            cmd.extend(["--expect-workers", str(expect_workers)])
+        expect_workers_max_wait = getattr(args, "expect_workers_max_wait", None)
+        if expect_workers_max_wait:
+            cmd.extend(["--expect-workers-max-wait", str(expect_workers_max_wait)])
+
+    # Distributed mode: worker
+    if worker:
+        cmd.append("--worker")
+        leader_host = getattr(args, "leader_host", "127.0.0.1")
+        cmd.extend(["--master-host", leader_host])
+
     # Headless mode
     if args.headless:
         cmd.append("--headless")
-        cmd.extend(["-u", str(args.users)])
-        cmd.extend(["-r", str(args.spawn_rate)])
 
-        # Create run-specific directory with abbreviated run ID
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_id = str(uuid.uuid4())[:8]
-        run_dir = f"/tmp/chopsticks/{timestamp}_{run_id}"
-        os.makedirs(run_dir, exist_ok=True)
+        # Users and spawn rate only for leader or standalone (not workers)
+        if not worker:
+            cmd.extend(["-u", str(args.users)])
+            cmd.extend(["-r", str(args.spawn_rate)])
 
-        # Add HTML and CSV reports to run directory
-        cmd.extend(["--html", f"{run_dir}/locust_report.html"])
-        cmd.extend(["--csv", f"{run_dir}/locust"])
+        # Create run-specific directory with abbreviated run ID (leader or standalone)
+        if not worker:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            run_id = str(uuid.uuid4())[:8]
+            run_dir = f"/tmp/chopsticks/{timestamp}_{run_id}"
+            os.makedirs(run_dir, exist_ok=True)
 
-        # Set environment variable for metrics collector to use same directory
-        os.environ["CHOPSTICKS_RUN_DIR"] = run_dir
+            cmd.extend(["--html", f"{run_dir}/locust_report.html"])
+            cmd.extend(["--csv", f"{run_dir}/locust"])
+
+            # Set environment variable for metrics collector to use same directory
+            os.environ["CHOPSTICKS_RUN_DIR"] = run_dir
 
     # Duration
     if args.duration:
