@@ -102,16 +102,19 @@ def build_locust_command(args) -> tuple[List[str], str]:
 
         # Create run-specific directory with abbreviated run ID (leader or standalone)
         if not worker:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            run_id = str(uuid.uuid4())[:8]
-            run_dir = f"/tmp/chopsticks/{timestamp}_{run_id}"
+            # Check if CHOPSTICKS_RUN_DIR is already set (e.g., by charm)
+            run_dir = os.environ.get("CHOPSTICKS_RUN_DIR", "")
+            if not run_dir:
+                # Create our own directory if not pre-configured
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                run_id = str(uuid.uuid4())[:8]
+                run_dir = f"/tmp/chopsticks/{timestamp}_{run_id}"
+                os.environ["CHOPSTICKS_RUN_DIR"] = run_dir
+
             os.makedirs(run_dir, exist_ok=True)
 
             cmd.extend(["--html", f"{run_dir}/locust_report.html"])
             cmd.extend(["--csv", f"{run_dir}/locust"])
-
-            # Set environment variable for metrics collector to use same directory
-            os.environ["CHOPSTICKS_RUN_DIR"] = run_dir
 
     # Duration
     if args.duration:
