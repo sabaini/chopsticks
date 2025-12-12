@@ -8,11 +8,26 @@ import json
 import logging
 import pathlib
 import time
+import uuid
 
 import jubilant
 import pytest
 
 logger = logging.getLogger(__name__)
+
+
+def _log_action(test_class: str, action: str, details: str = "") -> str:
+    """Log a test action with timestamp."""
+    marker = str(uuid.uuid4())[:8]
+    logger.warning(
+        "=== TEST ACTION === class=%s action=%s marker=%s details=%s",
+        test_class,
+        action,
+        marker,
+        details,
+    )
+    return marker
+
 
 # Minimal test parameters for fast integration tests
 MIN_USERS = 1
@@ -139,6 +154,7 @@ class TestLeaderElection:
                 "s3-region": microceph_s3["region"],
                 "scenario-file": TEST_SCENARIO,
                 "locust-loglevel": "DEBUG",
+                "repo-branch": "fix/distrib-testing",
             },
         )
 
@@ -232,8 +248,10 @@ class TestStopTest:
         microceph_s3: dict[str, str],
     ) -> None:
         """Verify test can be stopped cleanly."""
+        _log_action("TestStopTest", "test_stop_test_action", "START")
         self._ensure_running_test(charm, juju, microceph_s3)
 
+        _log_action("TestStopTest", "calling stop-test")
         logger.info("Stopping test...")
         leader = _get_leader_unit(juju)
         result = juju.run(leader, "stop-test")
@@ -270,7 +288,13 @@ class TestStopTest:
 
         leader = _get_leader_unit(juju)
         status_result = juju.run(leader, "test-status")
-        if status_result.results["test-state"] != "running":
+        test_state = status_result.results["test-state"]
+        if test_state != "running":
+            _log_action(
+                "TestStopTest",
+                "_ensure_running_test: calling start-test",
+                f"test_state={test_state}",
+            )
             juju.run(
                 leader,
                 "start-test",
@@ -292,19 +316,32 @@ class TestFetchMetrics:
         microceph_s3: dict[str, str],
     ) -> None:
         """Verify metrics are collected and retrievable."""
+        _log_action("TestFetchMetrics", "test_fetch_metrics_action", "START")
         self._ensure_deployed_and_configured(charm, juju, microceph_s3)
 
+        _log_action("TestFetchMetrics", "calling start-test", f"duration={SHORT_DURATION}")
         logger.info("Running a short test...")
         leader = _get_leader_unit(juju)
-        juju.run(
+        result = juju.run(
             leader,
             "start-test",
             params={"users": MIN_USERS, "spawn-rate": MIN_SPAWN_RATE, "duration": SHORT_DURATION},
         )
-        time.sleep(25)
+        test_run_id = result.results.get("test-run-id", "unknown")
+        _log_action("TestFetchMetrics", "start-test returned", f"test_run_id={test_run_id}")
 
+        _log_action("TestFetchMetrics", "sleeping 25s", f"test_run_id={test_run_id}")
+        time.sleep(25)
+        _log_action("TestFetchMetrics", "sleep done", f"test_run_id={test_run_id}")
+
+        _log_action("TestFetchMetrics", "calling fetch-metrics", f"test_run_id={test_run_id}")
         logger.info("Fetching metrics...")
         result = juju.run(leader, "fetch-metrics", params={"format": "summary"})
+        _log_action(
+            "TestFetchMetrics",
+            "fetch-metrics returned",
+            f"files={result.results.get('files', 'NONE')}",
+        )
 
         assert result.results.get("files"), "Should have files listed"
         files = result.results["files"]
@@ -347,6 +384,7 @@ class TestDynamicScaling:
         microceph_s3: dict[str, str],
     ) -> None:
         """Verify adding units increases worker count."""
+        _log_action("TestDynamicScaling", "test_dynamic_scaling", "START")
         self._ensure_deployed_and_configured(charm, juju, microceph_s3)
 
         logger.info("Getting initial worker count...")
@@ -354,6 +392,7 @@ class TestDynamicScaling:
         initial_result = juju.run(leader, "test-status")
         initial_count = int(initial_result.results["worker-count"])
 
+        _log_action("TestDynamicScaling", "adding 2 units", f"initial_count={initial_count}")
         logger.info("Adding 2 more units...")
         juju.add_unit("chopsticks", num_units=2)
 
@@ -411,8 +450,10 @@ class TestPreventDuplicateTests:
         microceph_s3: dict[str, str],
     ) -> None:
         """Verify only one test can run at a time."""
+        _log_action("TestPreventDuplicateTests", "test_prevent_duplicate_tests", "START")
         self._ensure_deployed_and_configured(charm, juju, microceph_s3)
 
+        _log_action("TestPreventDuplicateTests", "calling start-test (first)")
         logger.info("Starting first test...")
         leader = _get_leader_unit(juju)
         juju.run(
@@ -435,6 +476,7 @@ class TestPreventDuplicateTests:
 
         assert "already running" in str(exc_info.value).lower()
 
+        _log_action("TestPreventDuplicateTests", "calling stop-test")
         logger.info("Stopping the test...")
         juju.run(leader, "stop-test")
 
@@ -464,7 +506,13 @@ class TestPreventDuplicateTests:
 
         leader = _get_leader_unit(juju)
         status_result = juju.run(leader, "test-status")
-        if status_result.results["test-state"] == "running":
+        test_state = status_result.results["test-state"]
+        if test_state == "running":
+            _log_action(
+                "TestPreventDuplicateTests",
+                "_ensure: calling stop-test",
+                f"test_state={test_state}",
+            )
             juju.run(leader, "stop-test")
 
 

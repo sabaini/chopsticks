@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Chopsticks Charm - Distributed Ceph stress testing with Locust."""
 
+import datetime
 import logging
 import os
+import re
 import shutil
 import subprocess
+import tarfile
 import uuid
 from pathlib import Path
 
@@ -233,10 +236,12 @@ class ChopsticksCharm(ops.CharmBase):
             self._publish_leader_address()
         else:
             new_leader = self._get_peer_data("leader_address", "")
-            if self._is_service_running(WORKER_SERVICE):
+            current_leader = self._get_current_worker_leader()
+            if self._is_service_running(WORKER_SERVICE) and new_leader != current_leader:
                 self._stop_service(WORKER_SERVICE)
                 logger.info(
-                    "_on_cluster_changed: stopped worker due to leader change (new leader: %s)",
+                    "_on_cluster_changed: stopped worker due to leader change (old: %s, new: %s)",
+                    current_leader or "unknown",
                     new_leader or "unknown",
                 )
             if self.config.get("autostart-workers") and new_leader:
@@ -247,6 +252,12 @@ class ChopsticksCharm(ops.CharmBase):
 
     def _on_start_test_action(self, event: ops.ActionEvent) -> None:
         """Start a distributed Locust test."""
+        timestamp = datetime.datetime.now().isoformat()
+        logger.warning(
+            "=== START-TEST ACTION CALLED === timestamp=%s params=%s",
+            timestamp,
+            dict(event.params),
+        )
         logger.debug("_on_start_test_action: starting, is_leader=%s", self.unit.is_leader())
         if not self.unit.is_leader():
             logger.debug("_on_start_test_action: failing - not leader")
@@ -353,6 +364,13 @@ class ChopsticksCharm(ops.CharmBase):
 
     def _on_stop_test_action(self, event: ops.ActionEvent) -> None:
         """Stop the current test."""
+        timestamp = datetime.datetime.now().isoformat()
+        current_test_id = self._get_peer_data("test_run_id", "unknown")
+        logger.warning(
+            "=== STOP-TEST ACTION CALLED === timestamp=%s current_test_id=%s",
+            timestamp,
+            current_test_id,
+        )
         logger.debug("_on_stop_test_action: starting, is_leader=%s", self.unit.is_leader())
         if not self.unit.is_leader():
             logger.debug("_on_stop_test_action: failing - not leader")
@@ -417,8 +435,6 @@ class ChopsticksCharm(ops.CharmBase):
 
     def _on_fetch_metrics_action(self, event: ops.ActionEvent) -> None:
         """Fetch metrics from the last test run."""
-        import tarfile
-
         logger.debug("_on_fetch_metrics_action: starting, is_leader=%s", self.unit.is_leader())
         if not self.unit.is_leader():
             logger.debug("_on_fetch_metrics_action: failing - not leader")
@@ -708,9 +724,8 @@ class ChopsticksCharm(ops.CharmBase):
         duration: str,
     ) -> str:
         """Generate systemd unit content for the headless leader service."""
-        leader_port = self.config.get("locust-master-port")
-        loglevel = self.config.get("locust-loglevel") or "INFO"
         scenario_path = REPO_DIR / scenario_file
+        metrics_dir = DATA_DIR / test_run_id
 
         return f"""[Unit]
 Description=Chopsticks Locust Leader
@@ -720,19 +735,16 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory={REPO_DIR}
-Environment=S3_CONFIG_PATH={S3_CONFIG_PATH}
 Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart={VENV_DIR}/bin/python -m locust \\
+Environment=CHOPSTICKS_RUN_DIR={metrics_dir}
+ExecStart={VENV_DIR}/bin/chopsticks run \\
+    --workload-config={S3_CONFIG_PATH} \\
     -f {scenario_path} \\
-    --master \\
-    --master-bind-port={leader_port} \\
-    --loglevel={loglevel} \\
+    --leader \\
     --headless \\
     --users={users} \\
     --spawn-rate={spawn_rate} \\
-    --run-time={duration} \\
-    --csv={DATA_DIR}/{test_run_id}/metrics \\
-    --html={DATA_DIR}/{test_run_id}/report.html
+    --duration={duration}
 Restart=no
 StandardOutput=journal
 StandardError=journal
@@ -743,9 +755,6 @@ WantedBy=multi-user.target
 
     def _leader_webui_service_content(self, scenario_file: str) -> str:
         """Generate systemd unit content for leader with web UI."""
-        leader_port = self.config.get("locust-master-port")
-        web_port = self.config.get("locust-web-port")
-        loglevel = self.config.get("locust-loglevel") or "INFO"
         scenario_path = REPO_DIR / scenario_file
 
         return f"""[Unit]
@@ -756,14 +765,11 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory={REPO_DIR}
-Environment=S3_CONFIG_PATH={S3_CONFIG_PATH}
 Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart={VENV_DIR}/bin/python -m locust \\
+ExecStart={VENV_DIR}/bin/chopsticks run \\
+    --workload-config={S3_CONFIG_PATH} \\
     -f {scenario_path} \\
-    --master \\
-    --master-bind-port={leader_port} \\
-    --loglevel={loglevel} \\
-    --web-port={web_port}
+    --leader
 Restart=no
 StandardOutput=journal
 StandardError=journal
@@ -774,8 +780,6 @@ WantedBy=multi-user.target
 
     def _worker_service_content(self, leader_host: str) -> str:
         """Generate systemd unit content for the worker service."""
-        leader_port = self.config.get("locust-master-port")
-        loglevel = self.config.get("locust-loglevel") or "INFO"
         scenario_file = self._get_peer_data("scenario_file") or self.config.get("scenario-file")
         scenario_path = REPO_DIR / scenario_file
 
@@ -787,14 +791,12 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory={REPO_DIR}
-Environment=S3_CONFIG_PATH={S3_CONFIG_PATH}
 Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart={VENV_DIR}/bin/python -m locust \\
+ExecStart={VENV_DIR}/bin/chopsticks run \\
+    --workload-config={S3_CONFIG_PATH} \\
     -f {scenario_path} \\
     --worker \\
-    --master-host={leader_host} \\
-    --master-port={leader_port} \\
-    --loglevel={loglevel}
+    --leader-host={leader_host}
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -878,6 +880,20 @@ WantedBy=multi-user.target
         is_running = result.returncode == 0
         logger.debug("_is_service_running(%s) = %s", service, is_running)
         return is_running
+
+    def _get_current_worker_leader(self) -> str:
+        """Get the leader address currently configured in the worker service file."""
+        service_path = SYSTEMD_DIR / f"{WORKER_SERVICE}.service"
+        if not service_path.exists():
+            return ""
+        try:
+            content = service_path.read_text()
+            match = re.search(r"--leader-host=(\S+)", content)
+            if match:
+                return match.group(1)
+        except OSError:
+            pass
+        return ""
 
     def _stop_all_services(self) -> None:
         """Stop all Chopsticks services."""
