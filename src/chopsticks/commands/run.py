@@ -42,7 +42,9 @@ def validate_config_paths(args) -> None:
     if args.locustfile:
         locustfile_path = Path(args.locustfile)
         if not locustfile_path.exists():
-            raise FileNotFoundError(f"Locust scenario file not found: {args.locustfile}")
+            raise FileNotFoundError(
+                f"Locust scenario file not found: {args.locustfile}"
+            )
 
 
 def validate_arguments(args) -> None:
@@ -92,7 +94,9 @@ def build_locust_command(args) -> tuple[List[str], str]:
     if worker:
         cmd.append("--worker")
         # Use runtime config/env if available, otherwise fall back to CLI arg
-        leader_host = config_loader.get_leader_host() or getattr(args, "leader_host", "127.0.0.1")
+        leader_host = config_loader.get_leader_host() or getattr(
+            args, "leader_host", "127.0.0.1"
+        )
         cmd.extend(["--master-host", leader_host])
 
     # Headless mode
@@ -188,12 +192,17 @@ def cmd_run(args) -> int:
     try:
         # Check for locustfile from runtime config if not provided
         if not args.locustfile:
-            locustfile = config_loader.get_runtime_param("scenario_file", "CHOPSTICKS_SCENARIO_FILE")
+            locustfile = config_loader.get_runtime_param(
+                "scenario_file", "CHOPSTICKS_SCENARIO_FILE"
+            )
             if not locustfile:
-                print("Error: Locustfile not specified via -f, CHOPSTICKS_SCENARIO_FILE, or runtime config", file=sys.stderr)
+                print(
+                    "Error: Locustfile not specified via -f, CHOPSTICKS_SCENARIO_FILE, or runtime config",
+                    file=sys.stderr,
+                )
                 return 1
             args.locustfile = locustfile
-        
+
         validate_config_paths(args)
         validate_arguments(args)
 

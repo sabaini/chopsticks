@@ -154,7 +154,7 @@ class TestLeaderElection:
                 "s3-region": microceph_s3["region"],
                 "scenario-file": TEST_SCENARIO,
                 "locust-loglevel": "DEBUG",
-                "repo-branch": "fix/distrib-testing",
+                "repo-branch": "main",
             },
         )
 

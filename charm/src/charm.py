@@ -249,10 +249,13 @@ class ChopsticksCharm(ops.CharmBase):
                     self._get_peer_data("scenario_file")
                     or self.config.get("scenario-file")
                 )
-                self._write_runtime_config({
-                    "leader_host": new_leader,
-                    "scenario_file": scenario_file,
-                })
+                if scenario_file:
+                    self._write_runtime_config({
+                        "leader_host": new_leader,
+                        "scenario_file": scenario_file,
+                    })
+                else:
+                    logger.warning("_on_cluster_changed: scenario file not available, skipping runtime config write")
             if self.config.get("autostart-workers") and new_leader:
                 logger.debug("_on_cluster_changed: attempting to start worker (non-leader)")
                 self._maybe_start_worker()
@@ -727,8 +730,12 @@ class ChopsticksCharm(ops.CharmBase):
             logger.debug("_maybe_start_worker: leader address not yet known")
             return
 
-        logger.debug("_maybe_start_worker: writing runtime config for leader=%s", leader_address)
         scenario_file = self._get_peer_data("scenario_file") or self.config.get("scenario-file")
+        if not scenario_file:
+            logger.warning("_maybe_start_worker: scenario file not configured, not starting worker")
+            return
+
+        logger.debug("_maybe_start_worker: writing runtime config for leader=%s", leader_address)
         self._write_runtime_config({
             "leader_host": leader_address,
             "scenario_file": scenario_file,
@@ -777,64 +784,67 @@ class ChopsticksCharm(ops.CharmBase):
 
     def _leader_service_content(
         self,
-        test_run_id: str,
         scenario_file: str,
-        users: int,
-        spawn_rate: float,
-        duration: str,
+        headless: bool = False,
+        test_run_id: str = "",
+        users: int = 0,
+        spawn_rate: float = 0.0,
+        duration: str = "",
     ) -> str:
-        """Generate systemd unit content for the headless leader service."""
+        """Generate systemd unit content for the leader service.
+        
+        Args:
+            scenario_file: Path to the scenario file
+            headless: If True, run in headless mode with test parameters
+            test_run_id: Test run ID (required if headless=True)
+            users: Number of users (required if headless=True)
+            spawn_rate: Spawn rate (required if headless=True)
+            duration: Test duration (required if headless=True)
+        """
         scenario_path = REPO_DIR / scenario_file
-        metrics_dir = DATA_DIR / test_run_id
+        
+        description = "Chopsticks Locust Leader" + (" with Web UI" if not headless else "")
+        env_vars = [
+            f"Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin",
+            f"Environment=CHOPSTICKS_SCENARIO_FILE={scenario_path}",
+        ]
+        
+        exec_args = [
+            f"{VENV_DIR}/bin/chopsticks run \\",
+            f"    --workload-config={S3_CONFIG_PATH} \\",
+            f"    -f {scenario_path} \\",
+            "    --leader",
+        ]
+        
+        if headless:
+            metrics_dir = DATA_DIR / test_run_id
+            env_vars.extend([
+                f"Environment=CHOPSTICKS_RUN_DIR={metrics_dir}",
+                f"Environment=CHOPSTICKS_USERS={users}",
+                f"Environment=CHOPSTICKS_SPAWN_RATE={spawn_rate}",
+                f"Environment=CHOPSTICKS_DURATION={duration}",
+            ])
+            exec_args.extend([
+                " \\",
+                "    --headless \\",
+                f"    --users={users} \\",
+                f"    --spawn-rate={spawn_rate} \\",
+                f"    --duration={duration}",
+            ])
+        
+        env_section = "\n".join(env_vars)
+        exec_start = "\n".join(exec_args)
 
         return f"""[Unit]
-Description=Chopsticks Locust Leader
+Description={description}
 After=network.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory={REPO_DIR}
-Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin
-Environment=CHOPSTICKS_RUN_DIR={metrics_dir}
-Environment=CHOPSTICKS_SCENARIO_FILE={scenario_path}
-Environment=CHOPSTICKS_USERS={users}
-Environment=CHOPSTICKS_SPAWN_RATE={spawn_rate}
-Environment=CHOPSTICKS_DURATION={duration}
-ExecStart={VENV_DIR}/bin/chopsticks run \\
-    --workload-config={S3_CONFIG_PATH} \\
-    -f {scenario_path} \\
-    --leader \\
-    --headless \\
-    --users={users} \\
-    --spawn-rate={spawn_rate} \\
-    --duration={duration}
-Restart=no
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-    def _leader_webui_service_content(self, scenario_file: str) -> str:
-        """Generate systemd unit content for leader with web UI."""
-        scenario_path = REPO_DIR / scenario_file
-
-        return f"""[Unit]
-Description=Chopsticks Locust Leader with Web UI
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory={REPO_DIR}
-Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin
-Environment=CHOPSTICKS_SCENARIO_FILE={scenario_path}
-ExecStart={VENV_DIR}/bin/chopsticks run \\
-    --workload-config={S3_CONFIG_PATH} \\
-    -f {scenario_path} \\
-    --leader
+{env_section}
+ExecStart={exec_start}
 Restart=no
 StandardOutput=journal
 StandardError=journal
@@ -898,10 +908,11 @@ WantedBy=multi-user.target
         spawn_rate: float,
         duration: str,
     ) -> None:
-        """Render and install the leader systemd service file."""
+        """Render and install the headless leader systemd service file."""
         content = self._leader_service_content(
-            test_run_id=test_run_id,
             scenario_file=scenario_file,
+            headless=True,
+            test_run_id=test_run_id,
             users=users,
             spawn_rate=spawn_rate,
             duration=duration,
@@ -912,7 +923,7 @@ WantedBy=multi-user.target
 
     def _render_leader_webui_service(self, scenario_file: str) -> None:
         """Render and install the leader with web UI systemd service file."""
-        content = self._leader_webui_service_content(scenario_file=scenario_file)
+        content = self._leader_service_content(scenario_file=scenario_file, headless=False)
         service_path = SYSTEMD_DIR / f"{LEADER_WEBUI_SERVICE}.service"
         service_path.write_text(content)
         subprocess.run(["systemctl", "daemon-reload"], check=True, capture_output=True)

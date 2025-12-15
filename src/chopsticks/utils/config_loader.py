@@ -88,7 +88,9 @@ def load_runtime_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
     return config
 
 
-def save_runtime_config(config: Dict[str, Any], config_path: Optional[Path] = None) -> None:
+def save_runtime_config(
+    config: Dict[str, Any], config_path: Optional[Path] = None
+) -> None:
     """
     Save runtime configuration
 
