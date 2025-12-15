@@ -316,7 +316,7 @@ class TestBuildLocustCommand:
         assert "scenarios/s3_large_objects.py" in cmd
         assert "--headless" in cmd
         assert "-u" in cmd and "10" in cmd
-        assert "-r" in cmd and "2" in cmd
+        assert "-r" in cmd and "2.0" in cmd
         assert "-t" in cmd and "5m" in cmd
         assert "--html" in cmd
         assert "--csv" in cmd
@@ -345,7 +345,7 @@ class TestBuildLocustCommand:
         assert "scenario.py" in cmd
         assert "--headless" in cmd
         assert "-u" in cmd and "5" in cmd
-        assert "-r" in cmd and "1" in cmd
+        assert "-r" in cmd and "1.0" in cmd
         assert "-t" not in cmd
         assert run_dir.startswith("/tmp/chopsticks/")
 
@@ -375,7 +375,7 @@ class TestBuildLocustCommand:
         assert "3" in cmd
         assert "--headless" in cmd
         assert "-u" in cmd and "100" in cmd
-        assert "-r" in cmd and "10" in cmd
+        assert "-r" in cmd and "10.0" in cmd
 
     def test_worker_mode_command(self):
         """Test command for worker mode."""

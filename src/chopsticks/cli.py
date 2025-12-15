@@ -67,7 +67,7 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--spawn-rate",
         "-r",
-        type=int,
+        type=float,
         help="Rate to spawn users at (users per second, headless mode).",
     )
 
