@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 from typing import List
 
+from chopsticks.utils import config_loader
+
 
 def validate_config_paths(args) -> None:
     """Validate configuration file paths exist."""
@@ -37,9 +39,10 @@ def validate_config_paths(args) -> None:
                 f"Scenario configuration file not found: {args.scenario_config}"
             )
 
-    locustfile_path = Path(args.locustfile)
-    if not locustfile_path.exists():
-        raise FileNotFoundError(f"Locust scenario file not found: {args.locustfile}")
+    if args.locustfile:
+        locustfile_path = Path(args.locustfile)
+        if not locustfile_path.exists():
+            raise FileNotFoundError(f"Locust scenario file not found: {args.locustfile}")
 
 
 def validate_arguments(args) -> None:
@@ -88,7 +91,8 @@ def build_locust_command(args) -> tuple[List[str], str]:
     # Distributed mode: worker
     if worker:
         cmd.append("--worker")
-        leader_host = getattr(args, "leader_host", "127.0.0.1")
+        # Use runtime config/env if available, otherwise fall back to CLI arg
+        leader_host = config_loader.get_leader_host() or getattr(args, "leader_host", "127.0.0.1")
         cmd.extend(["--master-host", leader_host])
 
     # Headless mode
@@ -161,8 +165,12 @@ def set_environment_variables(args) -> None:
     # Set generic config path
     os.environ["CHOPSTICKS_WORKLOAD_CONFIG"] = str(workload_config_path)
 
-    # Detect workload type from scenario file's base class
-    workload_type = detect_workload_type_from_locustfile(args.locustfile).upper()
+    # Detect workload type from scenario file's base class (if available)
+    if args.locustfile:
+        workload_type = detect_workload_type_from_locustfile(args.locustfile).upper()
+    else:
+        # Default to S3 if no locustfile specified
+        workload_type = "S3"
 
     # Set workload-specific config path (e.g., S3_CONFIG_PATH)
     os.environ[f"{workload_type}_CONFIG_PATH"] = str(workload_config_path)
@@ -178,6 +186,14 @@ def set_environment_variables(args) -> None:
 def cmd_run(args) -> int:
     """Execute the run command - run load tests"""
     try:
+        # Check for locustfile from runtime config if not provided
+        if not args.locustfile:
+            locustfile = config_loader.get_runtime_param("scenario_file", "CHOPSTICKS_SCENARIO_FILE")
+            if not locustfile:
+                print("Error: Locustfile not specified via -f, CHOPSTICKS_SCENARIO_FILE, or runtime config", file=sys.stderr)
+                return 1
+            args.locustfile = locustfile
+        
         validate_config_paths(args)
         validate_arguments(args)
 

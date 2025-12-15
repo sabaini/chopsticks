@@ -42,9 +42,9 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "-f",
         "--locustfile",
-        required=True,
+        required=False,
         type=str,
-        help="Path to Locust scenario file. Required.",
+        help="Path to Locust scenario file. Can also be specified via CHOPSTICKS_SCENARIO_FILE env var or runtime config.",
     )
 
     run_parser.add_argument(
