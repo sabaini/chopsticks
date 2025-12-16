@@ -262,7 +262,7 @@ class ChopsticksCharm(ops.CharmBase):
 
         self._set_ready_status()
 
-    def _validate_test_start_preconditions(self, event: ops.ActionEvent) -> bool:
+    def _validate_preconditions(self, event: ops.ActionEvent) -> bool:
         """Validate preconditions for starting a test.
 
         Returns:
@@ -389,7 +389,7 @@ class ChopsticksCharm(ops.CharmBase):
             dict(event.params),
         )
 
-        if not self._validate_test_start_preconditions(event):
+        if not self._validate_preconditions(event):
             return
 
         params = self._parse_test_parameters(event)
