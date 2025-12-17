@@ -824,8 +824,8 @@ class ChopsticksCharm(ops.CharmBase):
                 f"Environment=CHOPSTICKS_SPAWN_RATE={spawn_rate}",
                 f"Environment=CHOPSTICKS_DURATION={duration}",
             ])
+            exec_args[-1] = exec_args[-1] + " \\"
             exec_args.extend([
-                " \\",
                 "    --headless \\",
                 f"    --users={users} \\",
                 f"    --spawn-rate={spawn_rate} \\",
