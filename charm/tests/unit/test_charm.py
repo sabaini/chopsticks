@@ -256,11 +256,11 @@ def test_leader_service_content_generates_valid_unit(
     assert "[Unit]" in content
     assert "[Service]" in content
     assert "[Install]" in content
-    assert "--master" in content
+    assert "--leader" in content
     assert "--headless" in content
     assert "--users=10" in content
     assert "--spawn-rate=2.0" in content
-    assert "--run-time=5m" in content
+    assert "--duration=5m" in content
     assert "test-123" in content
 
 
@@ -278,8 +278,7 @@ def test_leader_webui_service_content_generates_valid_unit(
     )
     assert "[Unit]" in content
     assert "[Service]" in content
-    assert "--master" in content
-    assert "--web-port=8089" in content
+    assert "--leader" in content
     assert "--headless" not in content
 
 
@@ -297,8 +296,7 @@ def test_worker_service_content_generates_valid_unit(
     assert "[Unit]" in content
     assert "[Service]" in content
     assert "--worker" in content
-    assert "--master-host=10.0.0.1" in content
-    assert "--master-port=5557" in content
+    assert "--leader-host=10.0.0.1" in content
 
 
 def test_worker_service_content_uses_peer_data_scenario(

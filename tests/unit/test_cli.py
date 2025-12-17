@@ -92,9 +92,11 @@ class TestParseArgs:
         assert args.duration == "5m"
 
     def test_missing_required_args(self):
-        """Test error when required args are missing."""
+        """Test parsing when only workload-config is provided (locustfile is now optional)."""
+        # locustfile is now optional at parse time (can come from runtime config)
+        # but workload-config is still required
         with pytest.raises(SystemExit):
-            parse_args(["--workload-config", "s3.yaml"])
+            parse_args([])
 
 
 class TestValidateConfigPaths:

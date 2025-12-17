@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Chopsticks Charm - Distributed Ceph stress testing with Locust."""
 
+import datetime
 import logging
 import os
 import shutil
 import subprocess
+import tarfile
 import uuid
 from pathlib import Path
 
@@ -18,6 +20,7 @@ VENV_DIR = Path("/opt/chopsticks/venv")
 CONFIG_DIR = Path("/etc/chopsticks")
 DATA_DIR = Path("/var/lib/chopsticks")
 S3_CONFIG_PATH = CONFIG_DIR / "s3_config.yaml"
+RUNTIME_CONFIG_PATH = CONFIG_DIR / "runtime.yaml"
 SYSTEMD_DIR = Path("/etc/systemd/system")
 
 LEADER_SERVICE = "chopsticks-leader"
@@ -233,38 +236,64 @@ class ChopsticksCharm(ops.CharmBase):
             self._publish_leader_address()
         else:
             new_leader = self._get_peer_data("leader_address", "")
-            if self._is_service_running(WORKER_SERVICE):
+            current_leader = self._read_runtime_config().get("leader_host", "")
+            if self._is_service_running(WORKER_SERVICE) and new_leader != current_leader:
                 self._stop_service(WORKER_SERVICE)
                 logger.info(
-                    "_on_cluster_changed: stopped worker due to leader change (new leader: %s)",
+                    "_on_cluster_changed: stopped worker due to leader change (old: %s, new: %s)",
+                    current_leader or "unknown",
                     new_leader or "unknown",
                 )
+            if new_leader:
+                scenario_file = (
+                    self._get_peer_data("scenario_file")
+                    or self.config.get("scenario-file")
+                )
+                if scenario_file:
+                    self._write_runtime_config({
+                        "leader_host": new_leader,
+                        "scenario_file": scenario_file,
+                    })
+                else:
+                    logger.warning("_on_cluster_changed: scenario file not available, skipping runtime config write")
             if self.config.get("autostart-workers") and new_leader:
                 logger.debug("_on_cluster_changed: attempting to start worker (non-leader)")
                 self._maybe_start_worker()
 
         self._set_ready_status()
 
-    def _on_start_test_action(self, event: ops.ActionEvent) -> None:
-        """Start a distributed Locust test."""
-        logger.debug("_on_start_test_action: starting, is_leader=%s", self.unit.is_leader())
+    def _validate_preconditions(self, event: ops.ActionEvent) -> bool:
+        """Validate preconditions for starting a test.
+
+        Returns:
+            True if validation passed, False if event.fail() was called
+        """
         if not self.unit.is_leader():
-            logger.debug("_on_start_test_action: failing - not leader")
+            logger.debug("_validate_test_start_preconditions: failing - not leader")
             event.fail("start-test must be run on the leader unit")
-            return
+            return False
 
         if not self._is_config_valid():
-            logger.debug("_on_start_test_action: failing - config not valid")
+            logger.debug("_validate_test_start_preconditions: failing - config not valid")
             event.fail("S3 configuration is incomplete")
-            return
+            return False
 
         current_state = self._get_peer_data("test_state", "idle")
-        logger.debug("_on_start_test_action: current test_state=%s", current_state)
+        logger.debug("_validate_test_start_preconditions: current test_state=%s", current_state)
         if current_state == "running":
-            logger.debug("_on_start_test_action: failing - test already running")
+            logger.debug("_validate_test_start_preconditions: failing - test already running")
             event.fail("A test is already running")
-            return
+            return False
 
+        return True
+
+    def _parse_test_parameters(self, event: ops.ActionEvent):
+        """Parse and validate test parameters from action event.
+
+        Returns:
+            Tuple of (test_run_id, users, spawn_rate, duration, scenario, headless)
+            or None if validation failed (with event.fail() called)
+        """
         test_run_id = str(uuid.uuid4())
         users = event.params.get("users") or self.config.get("locust-users")
         spawn_rate = event.params.get("spawn-rate") or self.config.get("locust-spawn-rate")
@@ -273,75 +302,115 @@ class ChopsticksCharm(ops.CharmBase):
         headless = event.params.get("headless", True)
 
         logger.debug(
-            "_on_start_test_action: params - users=%s, spawn_rate=%s, duration=%s, "
+            "_parse_test_parameters: users=%s, spawn_rate=%s, duration=%s, "
             "scenario=%s, headless=%s, test_run_id=%s",
-            users,
-            spawn_rate,
-            duration,
-            scenario,
-            headless,
-            test_run_id,
+            users, spawn_rate, duration, scenario, headless, test_run_id,
         )
 
         try:
             users = int(users)
             spawn_rate = float(spawn_rate)
         except (TypeError, ValueError):
-            logger.debug("_on_start_test_action: failing - invalid numeric params")
+            logger.debug("_parse_test_parameters: failing - invalid numeric params")
             event.fail("Invalid users or spawn-rate; must be numeric")
-            return
+            return None
 
         scenario_path = REPO_DIR / scenario
         if not scenario_path.is_file():
-            logger.debug("_on_start_test_action: failing - scenario not found: %s", scenario_path)
+            logger.debug("_parse_test_parameters: failing - scenario not found: %s", scenario_path)
             event.fail(f"Scenario file not found: {scenario_path}")
+            return None
+
+        return test_run_id, users, spawn_rate, duration, scenario, headless
+
+    def _start_leader_service(self, headless: bool, test_run_id: str, scenario: str,
+                              users: int, spawn_rate: float, duration: str) -> None:
+        """Start the appropriate leader service (headless or web UI)."""
+        logger.debug("_start_leader_service: stopping existing leader services")
+        self._stop_service(LEADER_SERVICE)
+        self._stop_service(LEADER_WEBUI_SERVICE)
+
+        if headless:
+            logger.debug("_start_leader_service: rendering and starting headless leader")
+            self._render_leader_service(
+                test_run_id=test_run_id,
+                scenario_file=scenario,
+                users=users,
+                spawn_rate=spawn_rate,
+                duration=duration,
+            )
+            self._start_service(LEADER_SERVICE)
+        else:
+            logger.debug("_start_leader_service: rendering and starting webui leader")
+            self._render_leader_webui_service(scenario_file=scenario)
+            self._start_service(LEADER_WEBUI_SERVICE)
+
+    def _update_test_state(self, test_run_id: str, scenario: str) -> None:
+        """Update peer data and runtime config for active test."""
+        logger.debug("_update_test_state: updating peer data for test run")
+        self._set_peer_data("test_state", "running")
+        self._set_peer_data("test_run_id", test_run_id)
+        self._set_peer_data("scenario_file", scenario)
+
+        # Update runtime config with scenario for workers
+        runtime_config = self._read_runtime_config()
+        runtime_config["scenario_file"] = scenario
+        self._write_runtime_config(runtime_config)
+
+    def _build_test_result(self, test_run_id: str, users: int, spawn_rate: float,
+                           duration: str, scenario: str, headless: bool) -> dict:
+        """Build the action result dictionary."""
+        metrics_dir = DATA_DIR / test_run_id
+        leader_ip = self._get_private_ip()
+        web_port = self.config.get("locust-web-port")
+
+        result = {
+            "test-run-id": test_run_id,
+            "status": "started",
+            "users": users,
+            "spawn-rate": spawn_rate,
+            "duration": duration,
+            "scenario": scenario,
+            "headless": headless,
+            "metrics-dir": str(metrics_dir),
+        }
+
+        if not headless:
+            result["web-ui"] = f"http://{leader_ip}:{web_port}"
+
+        return result
+
+    def _on_start_test_action(self, event: ops.ActionEvent) -> None:
+        """Start a distributed Locust test."""
+        timestamp = datetime.datetime.now().isoformat()
+        logger.warning(
+            "=== START-TEST ACTION CALLED === timestamp=%s params=%s",
+            timestamp,
+            dict(event.params),
+        )
+
+        if not self._validate_preconditions(event):
             return
 
+        params = self._parse_test_parameters(event)
+        if params is None:
+            return
+
+        test_run_id, users, spawn_rate, duration, scenario, headless = params
+
+        # Create metrics directory
         metrics_dir = DATA_DIR / test_run_id
         metrics_dir.mkdir(parents=True, exist_ok=True)
         logger.debug("_on_start_test_action: created metrics dir: %s", metrics_dir)
 
         try:
-            logger.debug("_on_start_test_action: stopping existing leader services")
-            self._stop_service(LEADER_SERVICE)
-            self._stop_service(LEADER_WEBUI_SERVICE)
-
-            if headless:
-                logger.debug("_on_start_test_action: rendering and starting headless leader")
-                self._render_leader_service(
-                    test_run_id=test_run_id,
-                    scenario_file=scenario,
-                    users=users,
-                    spawn_rate=spawn_rate,
-                    duration=duration,
-                )
-                self._start_service(LEADER_SERVICE)
-            else:
-                logger.debug("_on_start_test_action: rendering and starting webui leader")
-                self._render_leader_webui_service(scenario_file=scenario)
-                self._start_service(LEADER_WEBUI_SERVICE)
-
-            logger.debug("_on_start_test_action: updating peer data for test run")
-            self._set_peer_data("test_state", "running")
-            self._set_peer_data("test_run_id", test_run_id)
-            self._set_peer_data("scenario_file", scenario)
-
-            leader_ip = self._get_private_ip()
-            web_port = self.config.get("locust-web-port")
-
-            result = {
-                "test-run-id": test_run_id,
-                "status": "started",
-                "users": users,
-                "spawn-rate": spawn_rate,
-                "duration": duration,
-                "scenario": scenario,
-                "headless": headless,
-                "metrics-dir": str(metrics_dir),
-            }
-
-            if not headless:
-                result["web-ui"] = f"http://{leader_ip}:{web_port}"
+            self._start_leader_service(
+                headless, test_run_id, scenario, users, spawn_rate, duration
+            )
+            self._update_test_state(test_run_id, scenario)
+            result = self._build_test_result(
+                test_run_id, users, spawn_rate, duration, scenario, headless
+            )
 
             logger.info("_on_start_test_action: test started successfully, id=%s", test_run_id)
             event.set_results(result)
@@ -353,6 +422,13 @@ class ChopsticksCharm(ops.CharmBase):
 
     def _on_stop_test_action(self, event: ops.ActionEvent) -> None:
         """Stop the current test."""
+        timestamp = datetime.datetime.now().isoformat()
+        current_test_id = self._get_peer_data("test_run_id", "unknown")
+        logger.warning(
+            "=== STOP-TEST ACTION CALLED === timestamp=%s current_test_id=%s",
+            timestamp,
+            current_test_id,
+        )
         logger.debug("_on_stop_test_action: starting, is_leader=%s", self.unit.is_leader())
         if not self.unit.is_leader():
             logger.debug("_on_stop_test_action: failing - not leader")
@@ -417,8 +493,6 @@ class ChopsticksCharm(ops.CharmBase):
 
     def _on_fetch_metrics_action(self, event: ops.ActionEvent) -> None:
         """Fetch metrics from the last test run."""
-        import tarfile
-
         logger.debug("_on_fetch_metrics_action: starting, is_leader=%s", self.unit.is_leader())
         if not self.unit.is_leader():
             logger.debug("_on_fetch_metrics_action: failing - not leader")
@@ -610,7 +684,7 @@ class ChopsticksCharm(ops.CharmBase):
         return all(self.config.get(key) for key in required)
 
     def _publish_leader_address(self) -> None:
-        """Publish leader address to peer relation."""
+        """Publish leader address to peer relation and runtime config."""
         if not self.unit.is_leader():
             return
 
@@ -618,6 +692,7 @@ class ChopsticksCharm(ops.CharmBase):
         if leader_ip:
             self._set_peer_data("leader_address", leader_ip)
             self._set_peer_data("leader_unit", self.unit.name)
+            self._write_runtime_config({"leader_host": leader_ip})
             logger.info("Published leader address: %s", leader_ip)
 
     def _get_private_ip(self) -> str:
@@ -655,8 +730,16 @@ class ChopsticksCharm(ops.CharmBase):
             logger.debug("_maybe_start_worker: leader address not yet known")
             return
 
-        logger.debug("_maybe_start_worker: rendering worker service for leader=%s", leader_address)
-        self._render_worker_service(leader_address)
+        scenario_file = self._get_peer_data("scenario_file") or self.config.get("scenario-file")
+        if not scenario_file:
+            logger.warning("_maybe_start_worker: scenario file not configured, not starting worker")
+            return
+
+        logger.debug("_maybe_start_worker: writing runtime config for leader=%s", leader_address)
+        self._write_runtime_config({
+            "leader_host": leader_address,
+            "scenario_file": scenario_file,
+        })
         self._start_service(WORKER_SERVICE)
         logger.info(
             "_maybe_start_worker: started worker connecting to leader at %s", leader_address
@@ -701,38 +784,67 @@ class ChopsticksCharm(ops.CharmBase):
 
     def _leader_service_content(
         self,
-        test_run_id: str,
         scenario_file: str,
-        users: int,
-        spawn_rate: float,
-        duration: str,
+        headless: bool = False,
+        test_run_id: str = "",
+        users: int = 0,
+        spawn_rate: float = 0.0,
+        duration: str = "",
     ) -> str:
-        """Generate systemd unit content for the headless leader service."""
-        leader_port = self.config.get("locust-master-port")
-        loglevel = self.config.get("locust-loglevel") or "INFO"
+        """Generate systemd unit content for the leader service.
+        
+        Args:
+            scenario_file: Path to the scenario file
+            headless: If True, run in headless mode with test parameters
+            test_run_id: Test run ID (required if headless=True)
+            users: Number of users (required if headless=True)
+            spawn_rate: Spawn rate (required if headless=True)
+            duration: Test duration (required if headless=True)
+        """
         scenario_path = REPO_DIR / scenario_file
+        
+        description = "Chopsticks Locust Leader" + (" with Web UI" if not headless else "")
+        env_vars = [
+            f"Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin",
+            f"Environment=CHOPSTICKS_SCENARIO_FILE={scenario_path}",
+        ]
+        
+        exec_args = [
+            f"{VENV_DIR}/bin/chopsticks run \\",
+            f"    --workload-config={S3_CONFIG_PATH} \\",
+            f"    -f {scenario_path} \\",
+            "    --leader",
+        ]
+        
+        if headless:
+            metrics_dir = DATA_DIR / test_run_id
+            env_vars.extend([
+                f"Environment=CHOPSTICKS_RUN_DIR={metrics_dir}",
+                f"Environment=CHOPSTICKS_USERS={users}",
+                f"Environment=CHOPSTICKS_SPAWN_RATE={spawn_rate}",
+                f"Environment=CHOPSTICKS_DURATION={duration}",
+            ])
+            exec_args.extend([
+                " \\",
+                "    --headless \\",
+                f"    --users={users} \\",
+                f"    --spawn-rate={spawn_rate} \\",
+                f"    --duration={duration}",
+            ])
+        
+        env_section = "\n".join(env_vars)
+        exec_start = "\n".join(exec_args)
 
         return f"""[Unit]
-Description=Chopsticks Locust Leader
+Description={description}
 After=network.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory={REPO_DIR}
-Environment=S3_CONFIG_PATH={S3_CONFIG_PATH}
-Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart={VENV_DIR}/bin/python -m locust \\
-    -f {scenario_path} \\
-    --master \\
-    --master-bind-port={leader_port} \\
-    --loglevel={loglevel} \\
-    --headless \\
-    --users={users} \\
-    --spawn-rate={spawn_rate} \\
-    --run-time={duration} \\
-    --csv={DATA_DIR}/{test_run_id}/metrics \\
-    --html={DATA_DIR}/{test_run_id}/report.html
+{env_section}
+ExecStart={exec_start}
 Restart=no
 StandardOutput=journal
 StandardError=journal
@@ -741,44 +853,12 @@ StandardError=journal
 WantedBy=multi-user.target
 """
 
-    def _leader_webui_service_content(self, scenario_file: str) -> str:
-        """Generate systemd unit content for leader with web UI."""
-        leader_port = self.config.get("locust-master-port")
-        web_port = self.config.get("locust-web-port")
-        loglevel = self.config.get("locust-loglevel") or "INFO"
-        scenario_path = REPO_DIR / scenario_file
+    def _worker_service_content(self) -> str:
+        """Generate systemd unit content for the worker service.
 
-        return f"""[Unit]
-Description=Chopsticks Locust Leader with Web UI
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory={REPO_DIR}
-Environment=S3_CONFIG_PATH={S3_CONFIG_PATH}
-Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart={VENV_DIR}/bin/python -m locust \\
-    -f {scenario_path} \\
-    --master \\
-    --master-bind-port={leader_port} \\
-    --loglevel={loglevel} \\
-    --web-port={web_port}
-Restart=no
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-    def _worker_service_content(self, leader_host: str) -> str:
-        """Generate systemd unit content for the worker service."""
-        leader_port = self.config.get("locust-master-port")
-        loglevel = self.config.get("locust-loglevel") or "INFO"
-        scenario_file = self._get_peer_data("scenario_file") or self.config.get("scenario-file")
-        scenario_path = REPO_DIR / scenario_file
-
+        The worker service is static - it reads runtime parameters from
+        /etc/chopsticks/runtime.yaml or environment variables.
+        """
         return f"""[Unit]
 Description=Chopsticks Locust Worker
 After=network.target
@@ -787,14 +867,10 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory={REPO_DIR}
-Environment=S3_CONFIG_PATH={S3_CONFIG_PATH}
 Environment=PATH={VENV_DIR}/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart={VENV_DIR}/bin/python -m locust \\
-    -f {scenario_path} \\
-    --worker \\
-    --master-host={leader_host} \\
-    --master-port={leader_port} \\
-    --loglevel={loglevel}
+ExecStart={VENV_DIR}/bin/chopsticks run \\
+    --workload-config={S3_CONFIG_PATH} \\
+    --worker
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -805,15 +881,24 @@ WantedBy=multi-user.target
 """
 
     def _install_systemd_units(self) -> None:
-        """Reload systemd daemon (units are rendered dynamically)."""
+        """Install static systemd units that don't change."""
+        # Render the static worker service once
+        self._render_worker_service()
         subprocess.run(["systemctl", "daemon-reload"], check=True, capture_output=True)
 
     def _update_systemd_units(self) -> None:
-        """Update systemd units with current configuration."""
+        """Update runtime configuration for workers."""
         if not self.unit.is_leader():
             leader_address = self._get_peer_data("leader_address", "")
             if leader_address:
-                self._render_worker_service(leader_address)
+                scenario_file = (
+                    self._get_peer_data("scenario_file")
+                    or self.config.get("scenario-file")
+                )
+                self._write_runtime_config({
+                    "leader_host": leader_address,
+                    "scenario_file": scenario_file,
+                })
 
     def _render_leader_service(
         self,
@@ -823,10 +908,11 @@ WantedBy=multi-user.target
         spawn_rate: float,
         duration: str,
     ) -> None:
-        """Render and install the leader systemd service file."""
+        """Render and install the headless leader systemd service file."""
         content = self._leader_service_content(
-            test_run_id=test_run_id,
             scenario_file=scenario_file,
+            headless=True,
+            test_run_id=test_run_id,
             users=users,
             spawn_rate=spawn_rate,
             duration=duration,
@@ -837,14 +923,14 @@ WantedBy=multi-user.target
 
     def _render_leader_webui_service(self, scenario_file: str) -> None:
         """Render and install the leader with web UI systemd service file."""
-        content = self._leader_webui_service_content(scenario_file=scenario_file)
+        content = self._leader_service_content(scenario_file=scenario_file, headless=False)
         service_path = SYSTEMD_DIR / f"{LEADER_WEBUI_SERVICE}.service"
         service_path.write_text(content)
         subprocess.run(["systemctl", "daemon-reload"], check=True, capture_output=True)
 
-    def _render_worker_service(self, leader_host: str) -> None:
+    def _render_worker_service(self) -> None:
         """Render and install the worker systemd service file."""
-        content = self._worker_service_content(leader_host=leader_host)
+        content = self._worker_service_content()
         service_path = SYSTEMD_DIR / f"{WORKER_SERVICE}.service"
         service_path.write_text(content)
         subprocess.run(["systemctl", "daemon-reload"], check=True, capture_output=True)
@@ -878,6 +964,27 @@ WantedBy=multi-user.target
         is_running = result.returncode == 0
         logger.debug("_is_service_running(%s) = %s", service, is_running)
         return is_running
+
+    def _read_runtime_config(self) -> dict:
+        """Read runtime configuration."""
+        if not RUNTIME_CONFIG_PATH.exists():
+            return {}
+        try:
+            with open(RUNTIME_CONFIG_PATH, "r") as f:
+                return yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.warning("Failed to read runtime config: %s", e)
+            return {}
+
+    def _write_runtime_config(self, config: dict) -> None:
+        """Write runtime configuration."""
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(RUNTIME_CONFIG_PATH, "w") as f:
+                yaml.safe_dump(config, f)
+            logger.debug("Wrote runtime config: %s", config)
+        except Exception as e:
+            logger.warning("Failed to write runtime config: %s", e)
 
     def _stop_all_services(self) -> None:
         """Stop all Chopsticks services."""
